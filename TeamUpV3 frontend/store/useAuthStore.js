@@ -299,9 +299,13 @@ const useAuthStore = create((set, get) => ({
         role: updates.role,
         availability: updates.available ? 'Available' : 'Busy',
         description: updates.description,
-        avatar_url: updates.profile_image,
         updated_at: new Date().toISOString(),
       };
+
+      // Only include avatar_url if profile_image was explicitly provided in updates
+      if (updates.profile_image !== undefined) {
+        dbUpdates.avatar_url = updates.profile_image;
+      }
 
       // Save to Supabase
       const { data, error } = await profileHelpers.updateProfile(state.user.id, dbUpdates);
@@ -322,8 +326,12 @@ const useAuthStore = create((set, get) => ({
         role: updates.role,
         availability: updates.available ? 'Available' : 'Busy',
         description: updates.description,
-        avatar_url: updates.profile_image,
       };
+      
+      // Only update avatar_url in local state if it was explicitly changed
+      if (updates.profile_image !== undefined) {
+        newProfile.avatar_url = updates.profile_image;
+      }
       
       set({ profile: newProfile });
       return { success: true };

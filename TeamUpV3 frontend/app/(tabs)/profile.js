@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Button, Image, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { notificationHelpers, storageHelpers } from '../../lib/supabase';
+import { storageHelpers } from '../../lib/supabase';
 import useAuthStore from '../../store/useAuthStore';
 import useDataStore from '../../store/useDataStore';
 import useTeamStore from '../../store/useTeamStore';
@@ -113,8 +113,11 @@ export default function ProfileScreen() {
     interests: profile?.interests || [],
     role: profile?.role || '',
     available: profile?.available ?? true,
-    profileImage: profile?.profileImage || null,
+    profileImage: profile?.avatar_url || null,
   }));
+
+  // Track if user explicitly changed the profile image
+  const [imageChanged, setImageChanged] = useState(false);
 
   useEffect(() => {
     setEditable({
@@ -126,8 +129,10 @@ export default function ProfileScreen() {
       interests: profile?.interests || [],
       role: profile?.role || '',
       available: profile?.available ?? true,
-      profileImage: profile?.profileImage || null,
+      profileImage: profile?.avatar_url || null,
     });
+    // Reset image changed flag when profile reloads
+    setImageChanged(false);
   }, [profile, user]);
 
   const toggleSkill = (skill) => {
@@ -164,6 +169,11 @@ export default function ProfileScreen() {
         profile_image: editable.profileImage,
       };
       
+      // Only include profile image if it was explicitly changed by the user
+      if (imageChanged) {
+        updates.profile_image = editable.profileImage;
+      }
+      
       const result = await updateProfile(updates);
       
       if (result.success) {
@@ -199,6 +209,9 @@ export default function ProfileScreen() {
 
     if (!result.canceled && result.assets[0]) {
       const localUri = result.assets[0].uri;
+      
+      // Mark that user explicitly changed the image
+      setImageChanged(true);
       
       // Show local image immediately for preview
       setEditable(e => ({ ...e, profileImage: localUri }));
@@ -487,7 +500,7 @@ export default function ProfileScreen() {
           </>
         ) : (
           <Text>{profile.role || 'No preferred role set'}</Text>
-        )}}
+        )}
       </View>
 
       {/* Save / Cancel buttons when editing */}
