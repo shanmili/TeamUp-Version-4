@@ -148,7 +148,7 @@ export function SignUpScreen() {
 
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => {
+              onPress={async () => {
                 // Check if all fields are filled
                 if (!fullName || !email || !password) {
                   Alert.alert('Error', 'Please fill all fields');
@@ -169,9 +169,14 @@ export function SignUpScreen() {
                   return;
                 }
 
-                // All validations passed
-                signUp({ fullName, email }, 'fake-token');
-                router.replace('/setup/skills');
+                // Sign up with Supabase
+                const result = await signUp(email, password, fullName);
+                
+                if (result.success) {
+                  router.replace('/setup/skills');
+                } else {
+                  Alert.alert('Sign Up Failed', result.error || 'An error occurred');
+                }
               }}
             >
               <Text style={styles.primaryButtonText}>Sign Up</Text>
@@ -251,7 +256,7 @@ export function SignInScreen() {
 
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => {
+              onPress={async () => {
                 // Check if fields are filled
                 if (!email || !password) {
                   Alert.alert('Error', 'Please enter email and password');
@@ -272,9 +277,14 @@ export function SignInScreen() {
                   return;
                 }
 
-                // All validations passed
-                signIn({ email }, 'fake-token');
-                router.replace('/setup/skills');
+                // Sign in with Supabase
+                const result = await signIn(email, password);
+                
+                if (result.success) {
+                  router.replace('/(tabs)/teams');
+                } else {
+                  Alert.alert('Sign In Failed', result.error || 'Invalid credentials');
+                }
               }}
             >
               <Text style={styles.primaryButtonText}>Sign In</Text>

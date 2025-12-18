@@ -31,7 +31,7 @@ export default function ProfileScreen() {
   // Read profile setup from auth store
   const profile = useAuthStore((s) => s.profile);
   const signOut = useAuthStore((s) => s.signOut);
-  const setProfile = useAuthStore((s) => s.setProfile);
+  const updateProfile = useAuthStore((s) => s.updateProfile);
 
   useEffect(() => {
     loadProfileStats();
@@ -39,6 +39,7 @@ export default function ProfileScreen() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const user = useAuthStore((s) => s.user);
 
   // local editable copy
@@ -68,21 +69,36 @@ export default function ProfileScreen() {
     });
   }, [profile, user]);
 
-  function handleSave() {
-    const updated = {
-      ...profile,
-      name: editable.name,
-      description: editable.description,
-      contact: { ...(profile?.contact || {}), email: editable.email, phone: editable.phone },
-      skills: editable.skills ? editable.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-      interests: editable.interests ? editable.interests.split(',').map(i => i.trim()).filter(Boolean) : [],
-      role: editable.role,
-      available: !!editable.available,
-      profileImage: editable.profileImage,
-    };
-    setProfile(updated);
-    setEditing(false);
-    setSettingsOpen(false);
+  async function handleSave() {
+    try {
+      setSaving(true);
+      
+      const updates = {
+        name: editable.name,
+        description: editable.description,
+        email: editable.email,
+        phone: editable.phone,
+        skills: editable.skills ? editable.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
+        interests: editable.interests ? editable.interests.split(',').map(i => i.trim()).filter(Boolean) : [],
+        role: editable.role,
+        available: !!editable.available,
+        profile_image: editable.profileImage,
+      };
+      
+      const result = await updateProfile(updates);
+      
+      if (result.success) {
+        setEditing(false);
+        setSettingsOpen(false);
+        Alert.alert('Success', 'Profile updated successfully');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to update profile');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save profile');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleImagePick() {

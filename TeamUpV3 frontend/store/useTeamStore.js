@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { teamHelpers } from '../lib/supabase';
 
 const useTeamStore = create((set, get) => ({
   // State
@@ -8,25 +9,66 @@ const useTeamStore = create((set, get) => ({
   loading: false,
   error: null,
 
-  // Create a new team
-  createTeam: (teamData) => {
-    const newTeam = {
-      id: Date.now().toString(),
-      ...teamData,
-      createdAt: new Date().toISOString(),
-      members: [],
-      status: 'active',
-      skills: teamData.requiredSkills 
-        ? teamData.requiredSkills.split(',').map(s => s.trim()).filter(Boolean)
-        : [],
-    };
+  // Load all active teams from Supabase
+  loadTeams: async () => {
+    try {
+      set({ loading: true, error: null });
+      const { data, error } = await teamHelpers.getAllTeams();
+      
+      if (error) throw error;
+      
+      set({ teams: data || [], loading: false });
+    } catch (error) {
+      set({ error: error.message, loading: false });
+    }
+  },
 
-    set((state) => ({
-      teams: [...state.teams, newTeam],
-      myTeams: [...state.myTeams, newTeam],
-    }));
+  // Load user's teams from Supabase
+  loadMyTeams: async (userId) => {
+    try {
+      set({ loading: true, error: null });
+      const { data, error } = await teamHelpers.getMyTeams(userId);
+      
+      if (error) throw error;
+      
+      set({ myTeams: data || [], loading: false });
+    } catch (error) {
+      set({ error: error.message, loading: false });
+    }
+  },
 
-    return newTeam;
+  // Create a new team in Supabase
+  createTeam: async (teamData, userId) => {
+    try {
+      set({ loading: true, error: null });
+      
+      const { data, error } = await teamHelpers.createTeam({
+        team_name: teamData.teamName,
+        description: teamData.description,
+        project_type: teamData.projectType,
+        team_size: parseInt(teamData.teamSize) || null,
+        duration: teamData.duration,
+        skills: teamData.requiredSkills 
+          ? teamData.requiredSkills.split(',').map(s => s.trim()).filter(Boolean)
+          : [],
+        created_by: userId,
+        status: 'active',
+      });
+
+      if (error) throw error;
+
+      // Add to local state
+      set((state) => ({
+        teams: [data, ...state.teams],
+        myTeams: [data, ...state.myTeams],
+        loading: false,
+      }));
+
+      return { success: true, data };
+    } catch (error) {
+      set({ error: error.message, loading: false });
+      return { success: false, error: error.message };
+    }
   },
 
   // Get all teams
@@ -40,97 +82,144 @@ const useTeamStore = create((set, get) => ({
   },
 
   // Get team by ID
-  getTeamById: (teamId) => {
-    return get().teams.find(team => team.id === teamId);
+  getTeamById: async (teamId) => {
+    try {
+      const { data, error} = await teamHelpers.getTeam(teamId);
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Get team error:', error);
+      // Fallback to local state
+      return get().teams.find(team => team.id === teamId);
+    }
   },
 
-  // Update team
-  updateTeam: (teamId, updates) => {
-    set((state) => {
-      const updatedTeam = { ...updates, updatedAt: new Date().toISOString() };
+  // Update team in Supabase
+  updateTeam: async (teamId, updates) => {
+    try {
+      set({ loading: true, error: null });
       
-      // If team is being finished/archived, move it to archived teams
-      if (updates.status === 'finished' && !updates.archivedAt) {
-        updatedTeam.archivedAt = new Date().toISOString();
-      }
-      
-      // Check if team should be archived
       const shouldArchive = updates.status === 'finished' || updates.archivedAt;
       
+      const { data, error } = await teamHelpers.updateTeam(teamId, {
+        team_name: updates.teamName,
+        description: updates.description,
+        status: updates.status,
+        archived_at: updates.archivedAt,
+        ...updates,
+      });
+
+      if (error) throw error;
+
       if (shouldArchive) {
-        const teamToArchive = state.teams.find(t => t.id === teamId);
-        if (teamToArchive) {
-          return {
-            teams: state.teams.filter(team => team.id !== teamId),
-            myTeams: state.myTeams.filter(team => team.id !== teamId),
-            archivedTeams: [...state.archivedTeams, { ...teamToArchive, ...updatedTeam }],
-          };
-        }
+        set((state) => ({
+          teams: state.teams.filter(team => team.id !== teamId),
+          myTeams: state.myTeams.filter(team => team.id !== teamId),
+          archivedTeams: [...state.archivedTeams, data],
+          loading: false,
+        }));
+      } else {
+        set((state) => ({
+          teams: state.teams.map(team =>
+            team.id === teamId ? { ...team, ...data } : team
+          ),
+          myTeams: state.myTeams.map(team =>
+            team.id === teamId ? { ...team, ...data } : team
+          ),
+          loading: false,
+        }));
       }
+
+      return { success: true, data };
+    } catch (error) {
+      set({ error: error.message, loading: false });
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Delete team from Supabase
+  deleteTeam: async (teamId) => {
+    try {
+      set({ loading: true, error: null });
+      const { error } = await teamHelpers.deleteTeam(teamId);
       
-      return {
-        teams: state.teams.map(team =>
-          team.id === teamId ? { ...team, ...updatedTeam } : team
+      if (error) throw error;
+
+      set((state) => ({
+        teams: state.teams.filter(team => team.id !== teamId),
+        myTeams: state.myTeams.filter(team => team.id !== teamId),
+        loading: false,
+      }));
+
+      return { success: true };
+    } catch (error) {
+      set({ error: error.message, loading: false });
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Add member to team in Supabase
+  addMemberToTeam: async (teamId, member) => {
+    try {
+      const { data, error } = await teamHelpers.addMember(
+        teamId,
+        member.id || member.userId,
+        member.role || 'Member'
+      );
+
+      if (error) throw error;
+
+      const team = await get().getTeamById(teamId);
+      
+      set((state) => ({
+        teams: state.teams.map(t =>
+          t.id === teamId ? team : t
         ),
-        myTeams: state.myTeams.map(team =>
-          team.id === teamId ? { ...team, ...updatedTeam } : team
+        myTeams: state.myTeams.map(t =>
+          t.id === teamId ? team : t
         ),
-      };
-    });
+      }));
+
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   },
 
-  // Delete team
-  deleteTeam: (teamId) => {
-    set((state) => ({
-      teams: state.teams.filter(team => team.id !== teamId),
-      myTeams: state.myTeams.filter(team => team.id !== teamId),
-    }));
+  // Remove member from team in Supabase
+  removeMemberFromTeam: async (teamId, memberId) => {
+    try {
+      const { error } = await teamHelpers.removeMember(teamId, memberId);
+      
+      if (error) throw error;
+
+      const team = await get().getTeamById(teamId);
+      
+      set((state) => ({
+        teams: state.teams.map(t =>
+          t.id === teamId ? team : t
+        ),
+        myTeams: state.myTeams.map(t =>
+          t.id === teamId ? team : t
+        ),
+      }));
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   },
 
-  // Add member to team
-  addMemberToTeam: (teamId, member) => {
-    set((state) => ({
-      teams: state.teams.map(team =>
-        team.id === teamId
-          ? { ...team, members: [...(team.members || []), member] }
-          : team
-      ),
-      myTeams: state.myTeams.map(team =>
-        team.id === teamId
-          ? { ...team, members: [...(team.members || []), member] }
-          : team
-      ),
-    }));
-  },
-
-  // Remove member from team
-  removeMemberFromTeam: (teamId, memberId) => {
-    set((state) => ({
-      teams: state.teams.map(team =>
-        team.id === teamId
-          ? { ...team, members: team.members.filter(m => m.id !== memberId) }
-          : team
-      ),
-      myTeams: state.myTeams.map(team =>
-        team.id === teamId
-          ? { ...team, members: team.members.filter(m => m.id !== memberId) }
-          : team
-      ),
-    }));
-  },
-
-  // Search teams
-  searchTeams: (query) => {
-    const allTeams = get().teams;
-    if (!query.trim()) return allTeams;
-
-    const lowerQuery = query.toLowerCase();
-    return allTeams.filter(team =>
-      team.teamName?.toLowerCase().includes(lowerQuery) ||
-      team.description?.toLowerCase().includes(lowerQuery) ||
-      team.projectType?.toLowerCase().includes(lowerQuery) ||
-      team.skills?.some(skill => skill.toLowerCase().includes(lowerQuery))
-    );
+  // Search teams in Supabase
+  searchTeams: async (query) => {
+    try {
+      const { data, error } = await teamHelpers.searchTeams(query);
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Search error:', error);
+      return [];
+    }
   },
 
   // Set loading state
@@ -143,47 +232,46 @@ const useTeamStore = create((set, get) => ({
   clearError: () => set({ error: null }),
 
   // Populate sample teams (for testing)
-  populateSampleTeams: () => {
+  populateSampleTeams: async (userId) => {
     const sampleTeams = [
       {
-        id: '1',
         teamName: 'Web Dev Innovators',
         description: 'Building a modern e-commerce platform with cutting-edge technologies',
         projectType: 'Web Development',
         skills: ['React', 'Node.js', 'MongoDB', 'TypeScript'],
-        teamSize: '5',
-        duration: '3 months',
-        createdAt: new Date().toISOString(),
-        members: [],
-        status: 'active',
+        maxMembers: 5,
+        status: 'in-progress',
+        createdBy: userId,
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
       },
       {
-        id: '2',
         teamName: 'Mobile App Creators',
         description: 'Developing a fitness tracking app for iOS and Android',
         projectType: 'Mobile Development',
         skills: ['React Native', 'Firebase', 'UI/UX Design'],
-        teamSize: '4',
-        duration: '2 months',
-        createdAt: new Date().toISOString(),
-        members: [],
-        status: 'active',
+        maxMembers: 4,
+        status: 'in-progress',
+        createdBy: userId,
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
       },
       {
-        id: '3',
         teamName: 'AI Research Group',
         description: 'Exploring machine learning applications in healthcare',
         projectType: 'Research',
         skills: ['Python', 'TensorFlow', 'Data Analysis'],
-        teamSize: '6',
-        duration: '6 months',
-        createdAt: new Date().toISOString(),
-        members: [],
-        status: 'active',
+        maxMembers: 6,
+        status: 'in-progress',
+        createdBy: userId,
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
       },
     ];
 
-    set({ teams: sampleTeams, myTeams: [] });
+    for (const teamData of sampleTeams) {
+      await get().createTeam(teamData, userId);
+    }
   },
 
   // Clear all teams
@@ -195,74 +283,47 @@ const useTeamStore = create((set, get) => ({
   },
 
   // Archive team directly
-  archiveTeam: (teamId) => {
-    set((state) => {
-      const teamToArchive = state.teams.find(t => t.id === teamId);
-      if (!teamToArchive) return state;
-
-      return {
-        teams: state.teams.filter(team => team.id !== teamId),
-        myTeams: state.myTeams.filter(team => team.id !== teamId),
-        archivedTeams: [
-          ...state.archivedTeams,
-          { ...teamToArchive, status: 'finished', archivedAt: new Date().toISOString() }
-        ],
-      };
+  archiveTeam: async (teamId) => {
+    return get().updateTeam(teamId, {
+      archivedAt: new Date().toISOString(),
+      status: 'finished',
     });
   },
 
   // Restore team from archive
-  restoreTeam: (teamId) => {
-    set((state) => {
-      const teamToRestore = state.archivedTeams.find(t => t.id === teamId);
-      if (!teamToRestore) return state;
+  restoreTeam: async (teamId) => {
+    try {
+      const { data, error } = await teamHelpers.updateTeam(teamId, {
+        archived_at: null,
+        status: 'in-progress',
+      });
 
-      const { archivedAt, ...restoredTeam } = teamToRestore;
-      return {
+      if (error) throw error;
+
+      set((state) => ({
         archivedTeams: state.archivedTeams.filter(team => team.id !== teamId),
-        teams: [...state.teams, { ...restoredTeam, status: 'active' }],
-      };
-    });
+        teams: [...state.teams, data],
+        myTeams: data.created_by === state.currentUserId 
+          ? [...state.myTeams, data]
+          : state.myTeams,
+      }));
+
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   },
 
   // Auto-archive teams past their deadline
-  checkAndArchiveExpiredTeams: () => {
+  checkAndArchiveExpiredTeams: async () => {
+    const teams = get().teams;
     const now = new Date();
-    set((state) => {
-      const teamsToArchive = [];
-      const remainingTeams = [];
-      const remainingMyTeams = [];
 
-      state.teams.forEach(team => {
-        // Check if team has a deadline and if it's passed
-        if (team.deadline) {
-          const deadline = new Date(team.deadline);
-          if (deadline < now) {
-            teamsToArchive.push({
-              ...team,
-              status: 'finished',
-              archivedAt: new Date().toISOString(),
-            });
-          } else {
-            remainingTeams.push(team);
-          }
-        } else {
-          remainingTeams.push(team);
-        }
-      });
-
-      state.myTeams.forEach(team => {
-        if (!team.deadline || new Date(team.deadline) >= now) {
-          remainingMyTeams.push(team);
-        }
-      });
-
-      return {
-        teams: remainingTeams,
-        myTeams: remainingMyTeams,
-        archivedTeams: [...state.archivedTeams, ...teamsToArchive],
-      };
-    });
+    for (const team of teams) {
+      if (team.endDate && new Date(team.endDate) < now) {
+        await get().archiveTeam(team.id);
+      }
+    }
   },
 }));
 

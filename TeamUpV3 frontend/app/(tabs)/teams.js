@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Alert,
   Modal,
@@ -27,32 +27,76 @@ export default function Teams() {
   
   const myTeams = useTeamStore((s) => s.myTeams);
   const allTeams = useTeamStore((s) => s.teams);
-  const searchTeams = useTeamStore((s) => s.searchTeams);
+  const loadTeams = useTeamStore((s) => s.loadTeams);
+  const loadMyTeams = useTeamStore((s) => s.loadMyTeams);
+  const searchTeamsFunc = useTeamStore((s) => s.searchTeams);
   
   const notifications = useNotificationStore((s) => s.notifications);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const markAsRead = useNotificationStore((s) => s.markAsRead);
   const markAllAsRead = useNotificationStore((s) => s.markAllAsRead);
   const addNotification = useNotificationStore((s) => s.addNotification);
+  const loadNotifications = useNotificationStore((s) => s.loadNotifications);
+  const subscribeToNotifications = useNotificationStore((s) => s.subscribeToNotifications);
+  const unsubscribe = useNotificationStore((s) => s.unsubscribe);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredTeams, setFilteredTeams] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [appliedTeams, setAppliedTeams] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const handleSearch = (query) => {
+  // Load teams and notifications on mount
+  useEffect(() => {
+    const initializeData = async () => {
+      try {
+        setLoading(true);
+        
+        // Load teams
+        await loadTeams();
+        
+        if (user?.id) {
+          // Load user's teams
+          await loadMyTeams(user.id);
+          
+          // Load notifications
+          await loadNotifications(user.id);
+          
+          // Subscribe to real-time notifications
+          subscribeToNotifications(user.id, (newNotification) => {
+            // Optional: Show a toast or alert for new notifications
+            console.log('New notification:', newNotification);
+          });
+        }
+      } catch (error) {
+        console.error('Error initializing data:', error);
+        Alert.alert('Error', 'Failed to load data. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeData();
+
+    // Cleanup subscription on unmount
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.id]);
+
+  const handleSearch = async (query) => {
     setSearchQuery(query);
     if (query.trim()) {
-      const results = searchTeams(query);
-      setFilteredTeams(results);
+      const results = await searchTeamsFunc(query);
+      setFilteredTeams(results || []);
     } else {
       setFilteredTeams([]);
     }
   };
 
-  const handleNotificationClick = (notification) => {
+  const handleNotificationClick = async (notification) => {
     // Mark as read
-    markAsRead(notification.id);
+    await markAsRead(notification.id);
     
     // Navigate based on notification type
     if (notification.type === 'join_request') {
