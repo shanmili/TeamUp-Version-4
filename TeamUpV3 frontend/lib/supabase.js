@@ -419,7 +419,12 @@ export const messageHelpers = {
       .from('conversations')
       .select('*')
       .or(`and(participant_1.eq.${participant1},participant_2.eq.${participant2}),and(participant_1.eq.${participant2},participant_2.eq.${participant1})`)
-      .single();
+      .maybeSingle();
+    
+    if (findError) {
+      console.error('Error finding conversation:', findError);
+      return { data: null, error: findError };
+    }
     
     if (existing) {
       return { data: existing, error: null };
@@ -434,6 +439,10 @@ export const messageHelpers = {
       }])
       .select()
       .single();
+    
+    if (error) {
+      console.error('Error creating conversation:', error);
+    }
     
     return { data, error };
   },
@@ -527,13 +536,20 @@ export const messageHelpers = {
 
   // Send a message
   sendMessage: async (conversationId, senderId, content) => {
+    console.log('Sending message:', { conversationId, senderId, contentLength: content?.length });
+    
+    if (!conversationId || !senderId || !content?.trim()) {
+      console.error('Missing required fields for sending message');
+      return { data: null, error: new Error('Missing required fields') };
+    }
+    
     // Insert message
     const { data: message, error: msgError } = await supabase
       .from('messages')
       .insert([{
         conversation_id: conversationId,
         sender_id: senderId,
-        content,
+        content: content.trim(),
       }])
       .select(`
         *,
@@ -541,13 +557,20 @@ export const messageHelpers = {
       `)
       .single();
     
-    if (msgError) return { data: null, error: msgError };
+    if (msgError) {
+      console.error('Error inserting message:', msgError);
+      return { data: null, error: msgError };
+    }
     
     // Update conversation last_message_at
-    await supabase
+    const { error: updateError } = await supabase
       .from('conversations')
       .update({ last_message_at: new Date().toISOString() })
       .eq('id', conversationId);
+    
+    if (updateError) {
+      console.error('Error updating conversation:', updateError);
+    }
     
     return {
       data: {

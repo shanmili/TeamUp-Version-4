@@ -280,6 +280,58 @@ const useAuthStore = create((set, get) => ({
       }
     }
   },
+
+  // Update profile with multiple fields
+  updateProfile: async (updates) => {
+    const state = get();
+    if (!state.user?.id) {
+      return { success: false, error: 'Not logged in' };
+    }
+
+    try {
+      // Prepare database update
+      const dbUpdates = {
+        full_name: updates.name,
+        email: updates.email,
+        phone: updates.phone,
+        skills: updates.skills || [],
+        interests: updates.interests || [],
+        role: updates.role,
+        availability: updates.available ? 'Available' : 'Busy',
+        description: updates.description,
+        avatar_url: updates.profile_image,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Save to Supabase
+      const { data, error } = await profileHelpers.updateProfile(state.user.id, dbUpdates);
+      
+      if (error) {
+        console.error('Failed to update profile:', error);
+        return { success: false, error: error.message };
+      }
+
+      // Update local state
+      const newProfile = {
+        ...state.profile,
+        name: updates.name,
+        email: updates.email,
+        phone: updates.phone,
+        skills: updates.skills || [],
+        interests: updates.interests || [],
+        role: updates.role,
+        availability: updates.available ? 'Available' : 'Busy',
+        description: updates.description,
+        avatar_url: updates.profile_image,
+      };
+      
+      set({ profile: newProfile });
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+      return { success: false, error: error.message };
+    }
+  },
 }));
 
 export default useAuthStore;

@@ -14,6 +14,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import useAuthStore from '../store/useAuthStore';
 import useTeamStore from '../store/useTeamStore';
 
+// Predefined options from signup flow
+const SKILLS_OPTIONS = [
+  'JavaScript', 'React', 'Node.js', 'Python', 'Java', 'C++',
+  'Database Design', 'UI/UX Design', 'Machine Learning', 'Data Analysis',
+  'Project Management', 'Research', 'Technical Writing', 'Testing',
+  'Mobile Development', 'Web Development', 'API Development', 'DevOps'
+];
+
+const INTERESTS_OPTIONS = [
+  'Web Applications', 'Mobile Apps', 'AI/ML', 'Data Science', 'IoT',
+  'Blockchain', 'Gaming', 'Healthcare Tech', 'FinTech', 'Education Tech',
+  'E-commerce', 'Social Media', 'Security', 'Sustainability', 'AR/VR', 'Automation'
+];
+
 export default function CreateTeam() {
   const router = useRouter();
   const createTeam = useTeamStore((s) => s.createTeam);
@@ -24,13 +38,21 @@ export default function CreateTeam() {
   const [teamName, setTeamName] = useState('');
   const [description, setDescription] = useState('');
   const [projectType, setProjectType] = useState('');
-  const [requiredSkills, setRequiredSkills] = useState('');
+  const [requiredSkills, setRequiredSkills] = useState([]);
   const [teamSize, setTeamSize] = useState('');
   const [durationNumber, setDurationNumber] = useState('');
   const [durationUnit, setDurationUnit] = useState('months');
   const [creating, setCreating] = useState(false);
 
   const durationUnits = ['days', 'weeks', 'months', 'years'];
+
+  const toggleSkill = (skill) => {
+    setRequiredSkills(prev => 
+      prev.includes(skill) 
+        ? prev.filter(s => s !== skill)
+        : [...prev, skill]
+    );
+  };
 
   const handleCreateTeam = async () => {
     // Validation
@@ -56,7 +78,7 @@ export default function CreateTeam() {
         teamName: teamName.trim(),
         description: description.trim(),
         projectType: projectType.trim(),
-        requiredSkills: requiredSkills.trim(),
+        requiredSkills: requiredSkills.join(', '),
         teamSize: teamSize.trim(),
         duration: durationNumber.trim() ? `${durationNumber.trim()} ${durationUnit}` : '',
       }, user.id);
@@ -141,13 +163,32 @@ export default function CreateTeam() {
         {/* Required Skills */}
         <View style={styles.section}>
           <Text style={styles.label}>Required Skills</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Comma separated skills (e.g., React, Node.js, Design)"
-            value={requiredSkills}
-            onChangeText={setRequiredSkills}
-            placeholderTextColor="#999"
-          />
+          <Text style={styles.hint}>Tap to select the skills your team needs</Text>
+          <View style={styles.chipsContainer}>
+            {SKILLS_OPTIONS.map((skill) => {
+              const isSelected = requiredSkills.includes(skill);
+              return (
+                <TouchableOpacity
+                  key={skill}
+                  onPress={() => toggleSkill(skill)}
+                  style={[
+                    styles.chip,
+                    isSelected && styles.chipSelected
+                  ]}
+                >
+                  <Text style={[
+                    styles.chipText,
+                    isSelected && styles.chipTextSelected
+                  ]}>{skill}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {requiredSkills.length > 0 && (
+            <Text style={styles.selectedCount}>
+              {requiredSkills.length} skill{requiredSkills.length !== 1 ? 's' : ''} selected
+            </Text>
+          )}
         </View>
 
         {/* Team Size */}
@@ -319,5 +360,42 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontSize: 16,
     fontWeight: '600',
+  },
+  hint: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 12,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  chip: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginRight: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  chipSelected: {
+    backgroundColor: '#4f46e5',
+    borderColor: '#4f46e5',
+  },
+  chipText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  chipTextSelected: {
+    color: '#fff',
+  },
+  selectedCount: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
 });

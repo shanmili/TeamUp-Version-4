@@ -6,6 +6,30 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import useAuthStore from '../../store/useAuthStore';
 import useDataStore from '../../store/useDataStore';
 
+// Predefined options
+const SKILLS_OPTIONS = [
+  'JavaScript', 'React', 'Node.js', 'Python',
+  'Java', 'C++', 'Database Design', 'UI/UX Design',
+  'Machine Learning', 'Data Analysis', 'Project Management',
+  'Research', 'Technical Writing', 'Testing',
+  'Mobile Development', 'Web Development', 'API Development', 'DevOps'
+];
+
+const INTERESTS_OPTIONS = [
+  'Web Applications', 'Mobile Apps', 'AI/ML',
+  'Data Science', 'IoT', 'Blockchain',
+  'Gaming', 'Healthcare Tech', 'FinTech',
+  'Education Tech', 'E-commerce', 'Social Media',
+  'Security', 'Sustainability', 'AR/VR', 'Automation'
+];
+
+const ROLE_OPTIONS = [
+  { title: 'Front-End Developer', description: 'Focus on user interface and user experience' },
+  { title: 'Back-End Developer', description: 'Focus on server-side logic and database management' },
+  { title: 'Team Lead', description: 'Coordinate team activities and project management' },
+  { title: 'Researcher', description: 'Focus on research, analysis, and documentation' },
+];
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -48,8 +72,8 @@ export default function ProfileScreen() {
     description: profile?.description || '',
     email: profile?.contact?.email || user?.email || '',
     phone: profile?.contact?.phone || profile?.phone || '',
-    skills: (profile?.skills || []).join(', '),
-    interests: (profile?.interests || []).join(', '),
+    skills: profile?.skills || [],
+    interests: profile?.interests || [],
     role: profile?.role || '',
     available: profile?.available ?? true,
     profileImage: profile?.profileImage || null,
@@ -61,13 +85,31 @@ export default function ProfileScreen() {
       description: profile?.description || '',
       email: profile?.contact?.email || user?.email || '',
       phone: profile?.contact?.phone || profile?.phone || '',
-      skills: (profile?.skills || []).join(', '),
-      interests: (profile?.interests || []).join(', '),
+      skills: profile?.skills || [],
+      interests: profile?.interests || [],
       role: profile?.role || '',
       available: profile?.available ?? true,
       profileImage: profile?.profileImage || null,
     });
   }, [profile, user]);
+
+  const toggleSkill = (skill) => {
+    setEditable(e => ({
+      ...e,
+      skills: e.skills.includes(skill) 
+        ? e.skills.filter(s => s !== skill)
+        : [...e.skills, skill]
+    }));
+  };
+
+  const toggleInterest = (interest) => {
+    setEditable(e => ({
+      ...e,
+      interests: e.interests.includes(interest)
+        ? e.interests.filter(i => i !== interest)
+        : [...e.interests, interest]
+    }));
+  };
 
   async function handleSave() {
     try {
@@ -78,8 +120,8 @@ export default function ProfileScreen() {
         description: editable.description,
         email: editable.email,
         phone: editable.phone,
-        skills: editable.skills ? editable.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-        interests: editable.interests ? editable.interests.split(',').map(i => i.trim()).filter(Boolean) : [],
+        skills: editable.skills || [],
+        interests: editable.interests || [],
         role: editable.role,
         available: !!editable.available,
         profile_image: editable.profileImage,
@@ -211,7 +253,29 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Skills</Text>
         {editing ? (
-          <TextInput style={styles.editInput} value={editable.skills} onChangeText={(t)=>setEditable(e=>({...e, skills: t}))} placeholder="Comma separated skills" />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {SKILLS_OPTIONS.map((skill) => {
+              const isSelected = editable.skills.includes(skill);
+              return (
+                <TouchableOpacity
+                  key={skill}
+                  onPress={() => toggleSkill(skill)}
+                  style={{
+                    backgroundColor: isSelected ? '#4f46e5' : '#f3f4f6',
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 16,
+                    marginRight: 8,
+                    marginBottom: 8,
+                    borderWidth: 1,
+                    borderColor: isSelected ? '#4f46e5' : '#e5e7eb',
+                  }}
+                >
+                  <Text style={{ color: isSelected ? '#fff' : '#374151', fontSize: 13 }}>{skill}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         ) : (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {(profile.skills||[]).length > 0 ? (profile.skills.map((s,i)=>(<Text key={i} style={{ backgroundColor: '#eef2ff', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 8 }}>{s}</Text>))) : <Text style={{ color: '#6b7280' }}>No skills added</Text>}
@@ -223,7 +287,29 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Interests</Text>
         {editing ? (
-          <TextInput style={styles.editInput} value={editable.interests} onChangeText={(t)=>setEditable(e=>({...e, interests: t}))} placeholder="Comma separated interests" />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {INTERESTS_OPTIONS.map((interest) => {
+              const isSelected = editable.interests.includes(interest);
+              return (
+                <TouchableOpacity
+                  key={interest}
+                  onPress={() => toggleInterest(interest)}
+                  style={{
+                    backgroundColor: isSelected ? '#10b981' : '#f3f4f6',
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 16,
+                    marginRight: 8,
+                    marginBottom: 8,
+                    borderWidth: 1,
+                    borderColor: isSelected ? '#10b981' : '#e5e7eb',
+                  }}
+                >
+                  <Text style={{ color: isSelected ? '#fff' : '#374151', fontSize: 13 }}>{interest}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         ) : (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {(profile.interests||[]).length > 0 ? (profile.interests.map((i,idx)=>(<Text key={idx} style={{ backgroundColor: '#f0fff4', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 8 }}>{i}</Text>))) : <Text style={{ color: '#6b7280' }}>No interests added</Text>}
@@ -235,7 +321,29 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Preferred Role</Text>
         {editing ? (
-          <TextInput style={styles.editInput} value={editable.role} onChangeText={(t)=>setEditable(e=>({...e, role: t}))} placeholder="Preferred role" />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {ROLE_OPTIONS.map((roleOption) => {
+              const isSelected = editable.role === roleOption.title;
+              return (
+                <TouchableOpacity
+                  key={roleOption.title}
+                  onPress={() => setEditable(e => ({ ...e, role: roleOption.title }))}
+                  style={{
+                    backgroundColor: isSelected ? '#6366f1' : '#f3f4f6',
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    borderRadius: 12,
+                    marginRight: 10,
+                    marginBottom: 10,
+                    borderWidth: 2,
+                    borderColor: isSelected ? '#6366f1' : '#e5e7eb',
+                  }}
+                >
+                  <Text style={{ color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '600' : '400' }}>{roleOption.title}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         ) : (
           <Text>{profile.role || 'No preferred role set'}</Text>
         )}
@@ -249,8 +357,8 @@ export default function ProfileScreen() {
             description: profile?.description || '',
             email: profile?.contact?.email || user?.email || '',
             phone: profile?.contact?.phone || profile?.phone || '',
-            skills: (profile?.skills || []).join(', '),
-            interests: (profile?.interests || []).join(', '),
+            skills: profile?.skills || [],
+            interests: profile?.interests || [],
             role: profile?.role || '',
             available: profile?.available ?? true,
           }); }} />

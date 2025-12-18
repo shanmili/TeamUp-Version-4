@@ -13,7 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { messageHelpers } from '../lib/supabase';
 import useAuthStore from '../store/useAuthStore';
 import useMessageStore from '../store/useMessageStore';
@@ -21,6 +21,7 @@ import useMessageStore from '../store/useMessageStore';
 export default function Chat() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
   const { conversationId, otherUserId, otherUserName } = params;
   
   const { user } = useAuthStore();
@@ -201,8 +202,8 @@ export default function Chat() {
       {/* Messages */}
       <KeyboardAvoidingView
         style={styles.content}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {messagesLoading ? (
           <View style={styles.center}>
@@ -239,6 +240,7 @@ export default function Chat() {
             style={[styles.sendButton, (!newMessage.trim() || sending) && styles.sendButtonDisabled]}
             onPress={handleSend}
             disabled={!newMessage.trim() || sending}
+            activeOpacity={0.7}
           >
             {sending ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -248,6 +250,9 @@ export default function Chat() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+      
+      {/* Bottom safe area padding */}
+      <View style={{ backgroundColor: '#fff', paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }} />
     </SafeAreaView>
   );
 }
