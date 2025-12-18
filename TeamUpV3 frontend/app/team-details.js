@@ -1,16 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { leaveRequestHelpers, notificationHelpers } from '../lib/supabase';
 import useAuthStore from '../store/useAuthStore';
 import useMessageStore from '../store/useMessageStore';
 import useTeamStore from '../store/useTeamStore';
@@ -30,30 +33,58 @@ export default function TeamDetails() {
   
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [messagingMemberId, setMessagingMemberId] = useState(null);
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [pendingLeaveRequest, setPendingLeaveRequest] = useState(null);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [submittingLeave, setSubmittingLeave] = useState(false);
 
   // Check if current user is the creator of THIS team (not just if they have lead role)
   const isTeamCreator = team?.createdBy === currentUser?.id;
+  // Check if current user is a member (not creator)
+  const isMember = team?.members?.some(m => m.id === currentUser?.id);
+
+  const loadTeam = useCallback(async () => {
+    if (teamId) {
+      try {
+        const teamData = await getTeamById(teamId);
+        console.log('Loaded team data:', teamData);
+        setTeam(teamData);
+        
+        // Load leave requests if team creator
+        if (teamData?.createdBy === currentUser?.id) {
+          const { data } = await leaveRequestHelpers.getTeamLeaveRequests(teamId);
+          setLeaveRequests(data || []);
+        }
+        
+        // Check if current user has a pending leave request
+        if (currentUser?.id && !teamData?.createdBy === currentUser?.id) {
+          const { data } = await leaveRequestHelpers.getUserLeaveRequest(teamId, currentUser.id);
+          setPendingLeaveRequest(data);
+        }
+      } catch (error) {
+        console.error('Error loading team:', error);
+        Alert.alert('Error', 'Failed to load team details');
+      }
+    }
+  }, [teamId, getTeamById, currentUser?.id]);
 
   useEffect(() => {
-    const loadTeam = async () => {
-      if (teamId) {
-        setLoading(true);
-        try {
-          const teamData = await getTeamById(teamId);
-          console.log('Loaded team data:', teamData);
-          setTeam(teamData);
-        } catch (error) {
-          console.error('Error loading team:', error);
-          Alert.alert('Error', 'Failed to load team details');
-        } finally {
-          setLoading(false);
-        }
-      }
+    const initLoad = async () => {
+      setLoading(true);
+      await loadTeam();
+      setLoading(false);
     };
-    
-    loadTeam();
-  }, [teamId]);
+    initLoad();
+  }, [loadTeam]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadTeam();
+    setRefreshing(false);
+  }, [loadTeam]);
 
   if (loading) {
     return (
@@ -202,6 +233,162 @@ export default function TeamDetails() {
     }
   };
 
+  const handleOpenGroupChat = () => {
+    router.push({
+      pathname: '/group-chat',
+      params: {
+        teamId: team.id,
+        teamName: team.teamName,
+      },
+    });
+  };
+
+  const handleRequestLeave = async () => {
+    if (!leaveReason.trim()) {
+      Alert.alert('Reason Required', 'Please provide a reason for leaving the team.');
+      return;
+    }
+    
+    setSubmittingLeave(true);
+    try {
+      const { data, error } = await leaveRequestHelpers.createLeaveRequest(teamId, currentUser.id, leaveReason);
+      
+      if (error) {
+        Alert.alert('Error', 'Failed to submit leave request. You may already have a pending request.');
+        return;
+      }
+      
+      // Notify team lead
+      await notificationHelpers.createNotification({
+        type: 'leave_request',
+        title: 'Leave Request',
+        message: `${useAuthStore.getState().profile?.name || 'A member'} has requested to leave your team "${team.teamName}"`,
+        teamId: team.id,
+        teamName: team.teamName,
+        recipientId: team.createdBy,
+        senderId: currentUser.id,
+        senderName: useAuthStore.getState().profile?.name,
+        metadata: { leave_request_id: data.id, reason: leaveReason },
+      });
+      
+      setPendingLeaveRequest(data);
+      setShowLeaveModal(false);
+      setLeaveReason('');
+      Alert.alert('Request Submitted', 'Your leave request has been sent to the team lead for approval.');
+    } catch (error) {
+      console.error('Error submitting leave request:', error);
+      Alert.alert('Error', 'Failed to submit leave request');
+    } finally {
+      setSubmittingLeave(false);
+    }
+  };
+
+  const handleCancelLeaveRequest = async () => {
+    if (!pendingLeaveRequest) return;
+    
+    Alert.alert(
+      'Cancel Request',
+      'Are you sure you want to cancel your leave request?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          onPress: async () => {
+            try {
+              await leaveRequestHelpers.cancelLeaveRequest(pendingLeaveRequest.id);
+              setPendingLeaveRequest(null);
+              Alert.alert('Cancelled', 'Your leave request has been cancelled.');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to cancel leave request');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleApproveLeave = async (request) => {
+    Alert.alert(
+      'Approve Leave',
+      `Are you sure you want to approve ${request.user?.full_name || 'this member'}'s request to leave?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve',
+          onPress: async () => {
+            try {
+              const result = await leaveRequestHelpers.approveLeaveRequest(request.id, request.teamId, request.userId);
+              
+              if (result.success) {
+                // Notify the user
+                await notificationHelpers.createNotification({
+                  type: 'leave_approved',
+                  title: 'Leave Request Approved',
+                  message: `Your request to leave "${team.teamName}" has been approved.`,
+                  teamId: team.id,
+                  teamName: team.teamName,
+                  recipientId: request.userId,
+                  senderId: currentUser.id,
+                });
+                
+                // Refresh the team data
+                await loadTeam();
+                Alert.alert('Approved', 'The member has been removed from the team.');
+              } else {
+                Alert.alert('Error', 'Failed to approve leave request');
+              }
+            } catch (error) {
+              console.error('Error approving leave:', error);
+              Alert.alert('Error', 'Failed to approve leave request');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRejectLeave = async (request) => {
+    Alert.alert(
+      'Reject Leave',
+      `Are you sure you want to reject ${request.user?.full_name || 'this member'}'s request to leave?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result = await leaveRequestHelpers.rejectLeaveRequest(request.id);
+              
+              if (result.success) {
+                // Notify the user
+                await notificationHelpers.createNotification({
+                  type: 'leave_rejected',
+                  title: 'Leave Request Rejected',
+                  message: `Your request to leave "${team.teamName}" has been rejected by the team lead.`,
+                  teamId: team.id,
+                  teamName: team.teamName,
+                  recipientId: request.userId,
+                  senderId: currentUser.id,
+                });
+                
+                // Refresh leave requests
+                const { data } = await leaveRequestHelpers.getTeamLeaveRequests(teamId);
+                setLeaveRequests(data || []);
+                Alert.alert('Rejected', 'The leave request has been rejected.');
+              } else {
+                Alert.alert('Error', 'Failed to reject leave request');
+              }
+            } catch (error) {
+              console.error('Error rejecting leave:', error);
+              Alert.alert('Error', 'Failed to reject leave request');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -215,7 +402,13 @@ export default function TeamDetails() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Team Info Card */}
         <View style={styles.teamInfoCard}>
           <View style={styles.teamHeader}>
@@ -280,6 +473,66 @@ export default function TeamDetails() {
             </View>
           )}
         </View>
+
+        {/* Group Chat Button - Show for team creator and members */}
+        {(isTeamCreator || isMember) && team.status !== 'finished' && (
+          <TouchableOpacity 
+            style={styles.groupChatButton}
+            onPress={handleOpenGroupChat}
+          >
+            <View style={styles.groupChatIcon}>
+              <Ionicons name="people" size={24} color="#fff" />
+            </View>
+            <View style={styles.groupChatInfo}>
+              <Text style={styles.groupChatTitle}>Team Group Chat</Text>
+              <Text style={styles.groupChatSubtitle}>Chat with all team members</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={24} color="#6366f1" />
+          </TouchableOpacity>
+        )}
+
+        {/* Leave Requests Section - Only for Team Creator */}
+        {isTeamCreator && leaveRequests.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              <Ionicons name="exit-outline" size={18} color="#f59e0b" /> Leave Requests ({leaveRequests.length})
+            </Text>
+            {leaveRequests.map((request) => (
+              <View key={request.id} style={styles.leaveRequestCard}>
+                <View style={styles.leaveRequestInfo}>
+                  <View style={styles.leaveRequestAvatar}>
+                    <Text style={styles.leaveRequestAvatarText}>
+                      {(request.user?.full_name || 'U').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                    </Text>
+                  </View>
+                  <View style={styles.leaveRequestDetails}>
+                    <Text style={styles.leaveRequestName}>{request.user?.full_name || 'Unknown'}</Text>
+                    <Text style={styles.leaveRequestReason} numberOfLines={2}>
+                      Reason: {request.reason || 'No reason provided'}
+                    </Text>
+                    <Text style={styles.leaveRequestDate}>
+                      {new Date(request.createdAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.leaveRequestActions}>
+                  <TouchableOpacity 
+                    style={styles.approveButton}
+                    onPress={() => handleApproveLeave(request)}
+                  >
+                    <Ionicons name="checkmark" size={20} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.rejectButton}
+                    onPress={() => handleRejectLeave(request)}
+                  >
+                    <Ionicons name="close" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Team Members */}
         <View style={styles.section}>
@@ -373,6 +626,41 @@ export default function TeamDetails() {
           </View>
         )}
 
+        {/* Member Leave Request Section - Only for members (not creator) */}
+        {isMember && !isTeamCreator && team.status !== 'finished' && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Team Membership</Text>
+            
+            {pendingLeaveRequest ? (
+              <View style={styles.pendingLeaveCard}>
+                <View style={styles.pendingLeaveInfo}>
+                  <Ionicons name="time-outline" size={24} color="#f59e0b" />
+                  <View style={styles.pendingLeaveText}>
+                    <Text style={styles.pendingLeaveTitle}>Leave Request Pending</Text>
+                    <Text style={styles.pendingLeaveSubtitle}>
+                      Waiting for team lead approval
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity 
+                  style={styles.cancelLeaveButton}
+                  onPress={handleCancelLeaveRequest}
+                >
+                  <Text style={styles.cancelLeaveButtonText}>Cancel Request</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.requestLeaveButton}
+                onPress={() => setShowLeaveModal(true)}
+              >
+                <Ionicons name="exit-outline" size={20} color="#dc2626" />
+                <Text style={styles.requestLeaveButtonText}>Request to Leave Team</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {team.status === 'finished' && (
           <View style={styles.archivedNotice}>
             <Ionicons name="archive-outline" size={24} color="#666" />
@@ -382,6 +670,49 @@ export default function TeamDetails() {
           </View>
         )}
       </ScrollView>
+
+      {/* Leave Request Modal */}
+      {showLeaveModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Request to Leave Team</Text>
+            <Text style={styles.modalSubtitle}>
+              Your request will be sent to the team lead for approval.
+            </Text>
+            
+            <TextInput
+              style={styles.reasonInput}
+              placeholder="Please provide a reason for leaving..."
+              value={leaveReason}
+              onChangeText={setLeaveReason}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setShowLeaveModal(false);
+                  setLeaveReason('');
+                }}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalSubmitButton, submittingLeave && styles.modalSubmitButtonDisabled]}
+                onPress={handleRequestLeave}
+                disabled={submittingLeave}
+              >
+                <Text style={styles.modalSubmitButtonText}>
+                  {submittingLeave ? 'Submitting...' : 'Submit Request'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -670,6 +1001,230 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#FFF',
+    fontWeight: '600',
+  },
+  // Group Chat Button Styles
+  groupChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: '#6366f1',
+  },
+  groupChatIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#6366f1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  groupChatInfo: {
+    flex: 1,
+  },
+  groupChatTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+  },
+  groupChatSubtitle: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  // Leave Request Card Styles
+  leaveRequestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#f59e0b',
+  },
+  leaveRequestInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  leaveRequestAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f59e0b',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  leaveRequestAvatarText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  leaveRequestDetails: {
+    flex: 1,
+  },
+  leaveRequestName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  leaveRequestReason: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  leaveRequestDate: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 2,
+  },
+  leaveRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  approveButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#22c55e',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rejectButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ef4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Member Leave Request Styles
+  pendingLeaveCard: {
+    backgroundColor: '#fef3c7',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  pendingLeaveInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  pendingLeaveText: {
+    marginLeft: 12,
+  },
+  pendingLeaveTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#92400e',
+  },
+  pendingLeaveSubtitle: {
+    fontSize: 13,
+    color: '#a16207',
+    marginTop: 2,
+  },
+  cancelLeaveButton: {
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  cancelLeaveButtonText: {
+    color: '#92400e',
+    fontWeight: '600',
+  },
+  requestLeaveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fef2f2',
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    gap: 8,
+  },
+  requestLeaveButtonText: {
+    color: '#dc2626',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  // Modal Styles
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  reasonInput: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    minHeight: 100,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+  modalCancelButtonText: {
+    color: '#374151',
+    fontWeight: '600',
+  },
+  modalSubmitButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#dc2626',
+  },
+  modalSubmitButtonDisabled: {
+    backgroundColor: '#fca5a5',
+  },
+  modalSubmitButtonText: {
+    color: '#fff',
     fontWeight: '600',
   },
 });

@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import useAuthStore from '../store/useAuthStore';
 import useNotificationStore from '../store/useNotificationStore';
@@ -13,18 +13,34 @@ export default function ManageTeam() {
   const isTeamLead = typeof role === 'string' && role.toLowerCase().includes('lead');
 
   const myTeams = useTeamStore((s) => s.myTeams);
+  const loadMyTeams = useTeamStore((s) => s.loadMyTeams);
   const addMemberToTeam = useTeamStore((s) => s.addMemberToTeam);
   const notifications = useNotificationStore((s) => s.notifications);
+  const loadNotifications = useNotificationStore((s) => s.loadNotifications);
   const markAsRead = useNotificationStore((s) => s.markAsRead);
   const deleteNotification = useNotificationStore((s) => s.deleteNotification);
 
   // Filter join request notifications
   const [pendingRequests, setPendingRequests] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const joinRequests = notifications.filter(n => n.type === 'join_request');
     setPendingRequests(joinRequests);
   }, [notifications]);
+
+  const onRefresh = useCallback(async () => {
+    if (!user?.id) return;
+    setRefreshing(true);
+    try {
+      await loadMyTeams(user.id);
+      await loadNotifications(user.id);
+    } catch (error) {
+      console.error('Error refreshing:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [user?.id]);
 
   if (!isTeamLead) {
     return (
@@ -114,7 +130,13 @@ export default function ManageTeam() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
       
-      <ScrollView style={styles.scrollContainer} contentContainerStyle={{ paddingBottom: 24 }}>
+      <ScrollView 
+        style={styles.scrollContainer} 
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Header Section */}
         <View style={styles.header}>
           <View>
@@ -194,12 +216,20 @@ export default function ManageTeam() {
         <View style={styles.teamSection}>
           <Text style={styles.sectionTitle}>Your Teams</Text>
           {myTeams.map((team) => (
-            <View key={team.id} style={styles.teamCard}>
-              <Text style={styles.teamName}>{team.teamName}</Text>
-              <Text style={styles.teamMembers}>
-                {team.members?.length || 0} / {team.teamSize || '?'} members
-              </Text>
-            </View>
+            <TouchableOpacity 
+              key={team.id} 
+              style={styles.teamCard}
+              onPress={() => router.push(`/team-details?teamId=${team.id}`)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.teamName}>{team.teamName}</Text>
+                <Text style={styles.teamMembers}>
+                  {team.members?.length || 0} / {team.teamSize || '?'} members
+                </Text>
+              </View>
+              <Text style={{ color: '#007AFF', fontSize: 14 }}>View →</Text>
+            </TouchableOpacity>
           ))}
           {myTeams.length === 0 && (
             <Text style={styles.emptyTeamText}>No teams created yet</Text>
@@ -371,6 +401,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   teamName: {
     fontSize: 16,

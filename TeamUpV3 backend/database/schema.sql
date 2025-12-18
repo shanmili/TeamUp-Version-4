@@ -85,6 +85,37 @@ CREATE TABLE IF NOT EXISTS conversations (
   UNIQUE(participant_1, participant_2)
 );
 
+-- Group Chats Table (for team group chats)
+CREATE TABLE IF NOT EXISTS group_chats (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  team_id UUID REFERENCES teams(id) ON DELETE CASCADE UNIQUE,
+  name TEXT,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  last_message_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Group Chat Messages Table
+CREATE TABLE IF NOT EXISTS group_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  group_chat_id UUID REFERENCES group_chats(id) ON DELETE CASCADE,
+  sender_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Leave Requests Table (for members requesting to leave a team)
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  reason TEXT,
+  status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(team_id, user_id)
+);
+
 -- Messages Table
 CREATE TABLE IF NOT EXISTS messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -111,6 +142,12 @@ CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON conversations(la
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_group_chats_team_id ON group_chats(team_id);
+CREATE INDEX IF NOT EXISTS idx_group_messages_group_chat_id ON group_messages(group_chat_id);
+CREATE INDEX IF NOT EXISTS idx_group_messages_created_at ON group_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_team_id ON leave_requests(team_id);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_user_id ON leave_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
 
 -- Row Level Security (RLS) Policies
 
@@ -122,6 +159,9 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE join_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_chats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: Users can view all profiles but only update their own
 CREATE POLICY "Profiles are viewable by everyone" ON profiles
@@ -243,6 +283,97 @@ CREATE POLICY "Users can update own messages" ON messages
     )
   );
 
+-- Group Chats: Team members can view their team's group chat
+CREATE POLICY "Team members can view group chats" ON group_chats
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM team_members 
+      WHERE team_members.team_id = group_chats.team_id 
+      AND team_members.user_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM teams 
+      WHERE teams.id = group_chats.team_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "Team creators can create group chats" ON group_chats
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM teams 
+      WHERE teams.id = group_chats.team_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "Team creators can update group chats" ON group_chats
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM teams 
+      WHERE teams.id = group_chats.team_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+-- Group Messages: Team members can view and send messages
+CREATE POLICY "Team members can view group messages" ON group_messages
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM group_chats 
+      JOIN team_members ON team_members.team_id = group_chats.team_id
+      WHERE group_chats.id = group_messages.group_chat_id 
+      AND team_members.user_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM group_chats 
+      JOIN teams ON teams.id = group_chats.team_id
+      WHERE group_chats.id = group_messages.group_chat_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "Team members can send group messages" ON group_messages
+  FOR INSERT WITH CHECK (
+    auth.uid() = sender_id AND (
+      EXISTS (
+        SELECT 1 FROM group_chats 
+        JOIN team_members ON team_members.team_id = group_chats.team_id
+        WHERE group_chats.id = group_messages.group_chat_id 
+        AND team_members.user_id = auth.uid()
+      ) OR EXISTS (
+        SELECT 1 FROM group_chats 
+        JOIN teams ON teams.id = group_chats.team_id
+        WHERE group_chats.id = group_messages.group_chat_id 
+        AND teams.created_by = auth.uid()
+      )
+    )
+  );
+
+-- Leave Requests: Users can view their own or team creator can view all
+CREATE POLICY "Users can view relevant leave requests" ON leave_requests
+  FOR SELECT USING (
+    auth.uid() = user_id OR 
+    EXISTS (
+      SELECT 1 FROM teams 
+      WHERE teams.id = leave_requests.team_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can create leave requests" ON leave_requests
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Team creators can update leave requests" ON leave_requests
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM teams 
+      WHERE teams.id = leave_requests.team_id 
+      AND teams.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can delete own leave requests" ON leave_requests
+  FOR DELETE USING (auth.uid() = user_id);
+
 -- Functions and Triggers
 
 -- Function to update updated_at timestamp
@@ -254,6 +385,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop existing triggers if they exist (to allow re-running the schema)
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON profiles;
+DROP TRIGGER IF EXISTS update_teams_updated_at ON teams;
+DROP TRIGGER IF EXISTS update_join_requests_updated_at ON join_requests;
+DROP TRIGGER IF EXISTS update_leave_requests_updated_at ON leave_requests;
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
 -- Triggers for updated_at
 CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -262,6 +400,9 @@ CREATE TRIGGER update_teams_updated_at BEFORE UPDATE ON teams
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_join_requests_updated_at BEFORE UPDATE ON join_requests
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_leave_requests_updated_at BEFORE UPDATE ON leave_requests
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Function to create profile on user signup

@@ -1,10 +1,12 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, Button, Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Button, Image, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { notificationHelpers, storageHelpers } from '../../lib/supabase';
 import useAuthStore from '../../store/useAuthStore';
 import useDataStore from '../../store/useDataStore';
+import useTeamStore from '../../store/useTeamStore';
 
 // Predefined options
 const SKILLS_OPTIONS = [
@@ -57,14 +59,49 @@ export default function ProfileScreen() {
   const signOut = useAuthStore((s) => s.signOut);
   const updateProfile = useAuthStore((s) => s.updateProfile);
 
-  useEffect(() => {
-    loadProfileStats();
-  }, []);
+  // Team store for checking active teams
+  const myTeams = useTeamStore((s) => s.myTeams);
+  const joinedTeams = useTeamStore((s) => s.joinedTeams);
+  const loadMyTeams = useTeamStore((s) => s.loadMyTeams);
+  const loadJoinedTeams = useTeamStore((s) => s.loadJoinedTeams);
+  const leaveTeam = useTeamStore((s) => s.leaveTeam);
+
+  // Check if user is in any active team
+  const isTeamLead = typeof profile?.role === 'string' && profile.role.toLowerCase().includes('lead');
+  const hasActiveCreatedTeams = myTeams.filter(t => t.status === 'active').length > 0;
+  const hasActiveJoinedTeams = joinedTeams.filter(t => t.status === 'active').length > 0;
+  const hasActiveTeams = hasActiveCreatedTeams || hasActiveJoinedTeams;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const user = useAuthStore((s) => s.user);
+  const initializeAuth = useAuthStore((s) => s.initializeAuth);
+
+  useEffect(() => {
+    loadProfileStats();
+    if (user?.id) {
+      loadMyTeams(user.id);
+      loadJoinedTeams(user.id);
+    }
+  }, [user?.id]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await initializeAuth();
+      await loadProfileStats();
+      if (user?.id) {
+        await loadMyTeams(user.id);
+        await loadJoinedTeams(user.id);
+      }
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [user?.id]);
 
   // local editable copy
   const [editable, setEditable] = useState(() => ({
@@ -143,6 +180,8 @@ export default function ProfileScreen() {
     }
   }
 
+  const [uploadingImage, setUploadingImage] = useState(false);
+
   async function handleImagePick() {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
@@ -155,11 +194,34 @@ export default function ProfileScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.7,
     });
 
     if (!result.canceled && result.assets[0]) {
-      setEditable(e => ({ ...e, profileImage: result.assets[0].uri }));
+      const localUri = result.assets[0].uri;
+      
+      // Show local image immediately for preview
+      setEditable(e => ({ ...e, profileImage: localUri }));
+      
+      // Upload to Supabase Storage
+      setUploadingImage(true);
+      try {
+        const { url, error } = await storageHelpers.uploadProfileImage(user.id, localUri);
+        
+        if (error) {
+          console.error('Upload error:', error);
+          Alert.alert('Upload Failed', 'Could not upload image. Please try again.');
+          setEditable(e => ({ ...e, profileImage: profile?.avatar_url || null }));
+        } else if (url) {
+          // Update with the public URL
+          setEditable(e => ({ ...e, profileImage: url }));
+        }
+      } catch (error) {
+        console.error('Upload exception:', error);
+        Alert.alert('Upload Failed', 'Could not upload image. Please try again.');
+      } finally {
+        setUploadingImage(false);
+      }
     }
   }
 
@@ -174,8 +236,49 @@ export default function ProfileScreen() {
     );
   }
 
+  async function handleLeaveTeamRequest() {
+    // Get the list of active teams the user has joined
+    const activeJoinedTeams = joinedTeams.filter(t => t.status === 'active');
+    
+    if (activeJoinedTeams.length === 0) {
+      Alert.alert('No Active Teams', 'You are not a member of any active teams.');
+      return;
+    }
+
+    // Direct user to team details to submit a leave request
+    if (activeJoinedTeams.length === 1) {
+      const team = activeJoinedTeams[0];
+      Alert.alert(
+        'Request to Leave Team',
+        `To leave "${team.teamName || team.name}", you need to submit a request to the team lead for approval. Would you like to go to the team details page?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Go to Team', 
+            onPress: () => {
+              router.push(`/team-details?teamId=${team.id}`);
+            }
+          }
+        ]
+      );
+    } else {
+      // Multiple teams - direct to Teams tab
+      Alert.alert(
+        'Multiple Teams',
+        'You are a member of multiple active teams. Please go to the Teams tab and select a team to request to leave.',
+        [{ text: 'OK' }]
+      );
+    }
+  }
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}>
+    <ScrollView 
+      style={styles.container} 
+      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
       {/* Header with title and settings */}
       <View style={styles.headerRow}>
         <Text style={{ fontSize: 24, fontWeight: '700', flex: 1 }}>Profile</Text>
@@ -196,20 +299,23 @@ export default function ProfileScreen() {
 
       {/* Container 1: Profile Picture, Name, and Availability */}
       <View style={[styles.section, { alignItems: 'center' }]}>
-        <TouchableOpacity onPress={editing ? handleImagePick : undefined} activeOpacity={editing ? 0.7 : 1}>
+        <TouchableOpacity onPress={editing ? handleImagePick : undefined} activeOpacity={editing ? 0.7 : 1} disabled={uploadingImage}>
           <View style={styles.avatar}>
-            {editable.profileImage ? (
-              <Image source={{ uri: editable.profileImage }} style={{ width: 72, height: 72, borderRadius: 36 }} />
+            {uploadingImage ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : editable.profileImage || profile?.avatar_url ? (
+              <Image source={{ uri: editable.profileImage || profile?.avatar_url }} style={{ width: 72, height: 72, borderRadius: 36 }} />
             ) : (
               <Text style={styles.avatarText}>{(editable.name || 'You').split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}</Text>
             )}
-            {editing && (
-              <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: '#808080', width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' }}>
-                <Text style={{ color: '#fff', fontSize: 12 }}>+</Text>
+            {editing && !uploadingImage && (
+              <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: '#007AFF', width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' }}>
+                <Text style={{ color: '#fff', fontSize: 12 }}>📷</Text>
               </View>
             )}
           </View>
         </TouchableOpacity>
+        {uploadingImage && <Text style={{ color: '#666', marginTop: 8, fontSize: 12 }}>Uploading image...</Text>}
         {editing ? (
           <>
             <TextInput style={[styles.editInput, { width: '80%', textAlign: 'center', marginTop: 12 }]} value={editable.name} onChangeText={(t)=>setEditable(e=>({...e, name: t}))} placeholder="Your name" />
@@ -321,32 +427,67 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Preferred Role</Text>
         {editing ? (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {ROLE_OPTIONS.map((roleOption) => {
-              const isSelected = editable.role === roleOption.title;
-              return (
-                <TouchableOpacity
-                  key={roleOption.title}
-                  onPress={() => setEditable(e => ({ ...e, role: roleOption.title }))}
-                  style={{
-                    backgroundColor: isSelected ? '#6366f1' : '#f3f4f6',
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
-                    borderRadius: 12,
-                    marginRight: 10,
-                    marginBottom: 10,
-                    borderWidth: 2,
-                    borderColor: isSelected ? '#6366f1' : '#e5e7eb',
-                  }}
-                >
-                  <Text style={{ color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '600' : '400' }}>{roleOption.title}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <>
+            {hasActiveTeams && (
+              <View style={{ backgroundColor: '#fef3c7', padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#f59e0b' }}>
+                <Text style={{ color: '#92400e', fontWeight: '600', marginBottom: 4 }}>
+                  ⚠️ Role Change Restricted
+                </Text>
+                <Text style={{ color: '#92400e', fontSize: 13 }}>
+                  {hasActiveCreatedTeams 
+                    ? 'You have active teams. Please finish or terminate your teams before changing your role.'
+                    : 'You are a member of an active team. Please finish the project first, or leave the team (this will notify the team lead).'
+                  }
+                </Text>
+                {hasActiveJoinedTeams && !hasActiveCreatedTeams && (
+                  <TouchableOpacity 
+                    style={{ marginTop: 8, backgroundColor: '#dc2626', padding: 10, borderRadius: 8, alignItems: 'center' }}
+                    onPress={() => handleLeaveTeamRequest()}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>Request to Leave Team</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', opacity: hasActiveTeams ? 0.5 : 1 }}>
+              {ROLE_OPTIONS.map((roleOption) => {
+                const isSelected = editable.role === roleOption.title;
+                return (
+                  <TouchableOpacity
+                    key={roleOption.title}
+                    onPress={() => {
+                      if (hasActiveTeams) {
+                        Alert.alert(
+                          'Cannot Change Role',
+                          hasActiveCreatedTeams 
+                            ? 'You must finish or terminate all your active teams before changing your preferred role.'
+                            : 'You must complete your current team project or leave the team before changing your preferred role.',
+                          [{ text: 'OK' }]
+                        );
+                        return;
+                      }
+                      setEditable(e => ({ ...e, role: roleOption.title }));
+                    }}
+                    style={{
+                      backgroundColor: isSelected ? '#6366f1' : '#f3f4f6',
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      borderRadius: 12,
+                      marginRight: 10,
+                      marginBottom: 10,
+                      borderWidth: 2,
+                      borderColor: isSelected ? '#6366f1' : '#e5e7eb',
+                    }}
+                  >
+                    <Text style={{ color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '600' : '400' }}>{roleOption.title}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
         ) : (
           <Text>{profile.role || 'No preferred role set'}</Text>
-        )}
+        )}}
       </View>
 
       {/* Save / Cancel buttons when editing */}

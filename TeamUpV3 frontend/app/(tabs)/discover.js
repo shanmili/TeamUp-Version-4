@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { profileHelpers } from '../../lib/supabase';
 import useAuthStore from '../../store/useAuthStore';
@@ -113,11 +113,15 @@ export default function DiscoverScreen() {
             activeOpacity={0.7}
           >
             <View style={styles.memberHeader}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {(member.full_name || 'U').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                </Text>
-              </View>
+              {member.avatar_url ? (
+                <Image source={{ uri: member.avatar_url }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>
+                    {(member.full_name || 'U').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                  </Text>
+                </View>
+              )}
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>{member.full_name || 'Unknown'}</Text>
                 {member.role && (
@@ -251,6 +255,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     marginRight: 12,
   },
   avatarText: {

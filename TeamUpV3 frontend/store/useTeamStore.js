@@ -276,6 +276,24 @@ const useTeamStore = create((set, get) => ({
     }
   },
 
+  // Leave a team (user leaves voluntarily)
+  leaveTeam: async (teamId, userId) => {
+    try {
+      const { error } = await teamHelpers.removeMember(teamId, userId);
+      
+      if (error) throw error;
+
+      // Remove from joined teams locally
+      set((state) => ({
+        joinedTeams: state.joinedTeams.filter(t => t.id !== teamId),
+      }));
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
   // Search teams in Supabase
   searchTeams: async (query) => {
     try {

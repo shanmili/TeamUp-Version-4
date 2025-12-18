@@ -66,6 +66,47 @@ export const authHelpers = {
   },
 };
 
+// Storage operations for profile images
+export const storageHelpers = {
+  // Upload profile image and return public URL
+  uploadProfileImage: async (userId, imageUri) => {
+    try {
+      // Create file name with timestamp to avoid cache issues
+      const fileName = `${userId}/avatar_${Date.now()}.jpg`;
+      
+      // Fetch the image and convert to blob
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      
+      // Convert blob to array buffer
+      const arrayBuffer = await new Response(blob).arrayBuffer();
+      
+      // Upload to Supabase Storage
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: true,
+        });
+      
+      if (error) {
+        console.error('Storage upload error:', error);
+        return { url: null, error };
+      }
+      
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName);
+      
+      return { url: publicUrl, error: null };
+    } catch (error) {
+      console.error('Upload image error:', error);
+      return { url: null, error };
+    }
+  },
+};
+
 // Profile operations
 export const profileHelpers = {
   // Get profile
@@ -657,5 +698,345 @@ export const messageHelpers = {
         }
       )
       .subscribe();
+  },
+};
+
+// Group Chat operations
+export const groupChatHelpers = {
+  // Get or create group chat for a team
+  getOrCreateGroupChat: async (teamId, teamName, createdBy) => {
+    // Try to find existing group chat
+    const { data: existing, error: findError } = await supabase
+      .from('group_chats')
+      .select('*')
+      .eq('team_id', teamId)
+      .maybeSingle();
+    
+    if (findError) {
+      console.error('Error finding group chat:', findError);
+      return { data: null, error: findError };
+    }
+    
+    if (existing) {
+      return { data: existing, error: null };
+    }
+    
+    // Create new group chat
+    const { data, error } = await supabase
+      .from('group_chats')
+      .insert([{
+        team_id: teamId,
+        name: `${teamName} Group`,
+        created_by: createdBy,
+      }])
+      .select()
+      .single();
+    
+    return { data, error };
+  },
+
+  // Get group chat for a team
+  getGroupChat: async (teamId) => {
+    const { data, error } = await supabase
+      .from('group_chats')
+      .select('*')
+      .eq('team_id', teamId)
+      .maybeSingle();
+    
+    return { data, error };
+  },
+
+  // Get messages for a group chat
+  getGroupMessages: async (groupChatId, limit = 50) => {
+    const { data, error } = await supabase
+      .from('group_messages')
+      .select(`
+        *,
+        sender:profiles!group_messages_sender_id_fkey(id, full_name, avatar_url)
+      `)
+      .eq('group_chat_id', groupChatId)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    
+    if (error) return { data: null, error };
+    
+    const transformed = data.map(m => ({
+      id: m.id,
+      groupChatId: m.group_chat_id,
+      senderId: m.sender_id,
+      content: m.content,
+      createdAt: m.created_at,
+      sender: m.sender,
+    }));
+    
+    return { data: transformed, error: null };
+  },
+
+  // Send a group message
+  sendGroupMessage: async (groupChatId, senderId, content) => {
+    if (!groupChatId || !senderId || !content?.trim()) {
+      return { data: null, error: new Error('Missing required fields') };
+    }
+    
+    const { data: message, error: msgError } = await supabase
+      .from('group_messages')
+      .insert([{
+        group_chat_id: groupChatId,
+        sender_id: senderId,
+        content: content.trim(),
+      }])
+      .select(`
+        *,
+        sender:profiles!group_messages_sender_id_fkey(id, full_name, avatar_url)
+      `)
+      .single();
+    
+    if (msgError) {
+      console.error('Error sending group message:', msgError);
+      return { data: null, error: msgError };
+    }
+    
+    // Update group chat last_message_at
+    await supabase
+      .from('group_chats')
+      .update({ last_message_at: new Date().toISOString() })
+      .eq('id', groupChatId);
+    
+    return {
+      data: {
+        id: message.id,
+        groupChatId: message.group_chat_id,
+        senderId: message.sender_id,
+        content: message.content,
+        createdAt: message.created_at,
+        sender: message.sender,
+      },
+      error: null,
+    };
+  },
+
+  // Subscribe to group messages
+  subscribeToGroupMessages: (groupChatId, callback) => {
+    return supabase
+      .channel(`group_messages:${groupChatId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'group_messages',
+          filter: `group_chat_id=eq.${groupChatId}`,
+        },
+        async (payload) => {
+          const { data } = await supabase
+            .from('group_messages')
+            .select(`
+              *,
+              sender:profiles!group_messages_sender_id_fkey(id, full_name, avatar_url)
+            `)
+            .eq('id', payload.new.id)
+            .single();
+          
+          if (data) {
+            callback({
+              id: data.id,
+              groupChatId: data.group_chat_id,
+              senderId: data.sender_id,
+              content: data.content,
+              createdAt: data.created_at,
+              sender: data.sender,
+            });
+          }
+        }
+      )
+      .subscribe();
+  },
+
+  // Get all group chats for a user (teams they are part of or created)
+  getUserGroupChats: async (userId) => {
+    // Get teams where user is creator
+    const { data: createdTeams, error: createdError } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('created_by', userId)
+      .eq('status', 'active');
+    
+    if (createdError) {
+      console.error('Error fetching created teams:', createdError);
+    }
+
+    // Get teams where user is a member
+    const { data: memberships, error: memberError } = await supabase
+      .from('team_members')
+      .select('team_id, teams(id, team_name, status)')
+      .eq('user_id', userId);
+    
+    if (memberError) {
+      console.error('Error fetching team memberships:', memberError);
+    }
+
+    // Combine team IDs
+    const teamIds = new Set();
+    const teamNames = {};
+    
+    (createdTeams || []).forEach(t => {
+      teamIds.add(t.id);
+      teamNames[t.id] = t.team_name;
+    });
+    
+    (memberships || []).forEach(m => {
+      if (m.teams && m.teams.status === 'active') {
+        teamIds.add(m.team_id);
+        teamNames[m.team_id] = m.teams.team_name;
+      }
+    });
+
+    if (teamIds.size === 0) {
+      return { data: [], error: null };
+    }
+
+    // Get group chats for these teams
+    const { data: groupChats, error: chatError } = await supabase
+      .from('group_chats')
+      .select('*')
+      .in('team_id', Array.from(teamIds))
+      .order('last_message_at', { ascending: false });
+    
+    if (chatError) {
+      return { data: null, error: chatError };
+    }
+
+    // Get last message for each group chat
+    const chatsWithLastMessage = await Promise.all(
+      (groupChats || []).map(async (chat) => {
+        const { data: messages } = await supabase
+          .from('group_messages')
+          .select('*, sender:profiles!group_messages_sender_id_fkey(id, full_name)')
+          .eq('group_chat_id', chat.id)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        const lastMessage = messages?.[0] || null;
+        
+        return {
+          id: chat.id,
+          teamId: chat.team_id,
+          name: chat.name || teamNames[chat.team_id] || 'Team Group',
+          teamName: teamNames[chat.team_id] || 'Unknown Team',
+          lastMessageAt: chat.last_message_at,
+          createdAt: chat.created_at,
+          lastMessage: lastMessage ? {
+            id: lastMessage.id,
+            content: lastMessage.content,
+            senderId: lastMessage.sender_id,
+            senderName: lastMessage.sender?.full_name,
+            createdAt: lastMessage.created_at,
+          } : null,
+        };
+      })
+    );
+
+    return { data: chatsWithLastMessage, error: null };
+  },
+};
+
+// Leave Request operations
+export const leaveRequestHelpers = {
+  // Create a leave request
+  createLeaveRequest: async (teamId, userId, reason = '') => {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .insert([{
+        team_id: teamId,
+        user_id: userId,
+        reason,
+        status: 'pending',
+      }])
+      .select()
+      .single();
+    
+    return { data, error };
+  },
+
+  // Get leave requests for a team (for team lead)
+  getTeamLeaveRequests: async (teamId) => {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .select(`
+        *,
+        user:profiles!leave_requests_user_id_fkey(id, full_name, email, avatar_url)
+      `)
+      .eq('team_id', teamId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    
+    if (error) return { data: null, error };
+    
+    const transformed = data.map(r => ({
+      id: r.id,
+      teamId: r.team_id,
+      userId: r.user_id,
+      reason: r.reason,
+      status: r.status,
+      createdAt: r.created_at,
+      user: r.user,
+    }));
+    
+    return { data: transformed, error: null };
+  },
+
+  // Get user's pending leave request for a team
+  getUserLeaveRequest: async (teamId, userId) => {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .select('*')
+      .eq('team_id', teamId)
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .maybeSingle();
+    
+    return { data, error };
+  },
+
+  // Approve leave request (removes member from team)
+  approveLeaveRequest: async (requestId, teamId, userId) => {
+    // Update request status
+    const { error: updateError } = await supabase
+      .from('leave_requests')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', requestId);
+    
+    if (updateError) return { success: false, error: updateError };
+    
+    // Remove member from team
+    const { error: removeError } = await supabase
+      .from('team_members')
+      .delete()
+      .eq('team_id', teamId)
+      .eq('user_id', userId);
+    
+    if (removeError) return { success: false, error: removeError };
+    
+    return { success: true, error: null };
+  },
+
+  // Reject leave request
+  rejectLeaveRequest: async (requestId) => {
+    const { error } = await supabase
+      .from('leave_requests')
+      .update({ status: 'rejected', updated_at: new Date().toISOString() })
+      .eq('id', requestId);
+    
+    return { success: !error, error };
+  },
+
+  // Cancel leave request (by user)
+  cancelLeaveRequest: async (requestId) => {
+    const { error } = await supabase
+      .from('leave_requests')
+      .delete()
+      .eq('id', requestId);
+    
+    return { success: !error, error };
   },
 };

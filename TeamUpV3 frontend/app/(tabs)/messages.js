@@ -12,7 +12,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { messageHelpers } from '../../lib/supabase';
+import { groupChatHelpers, messageHelpers } from '../../lib/supabase';
 import useAuthStore from '../../store/useAuthStore';
 import useMessageStore from '../../store/useMessageStore';
 
@@ -21,12 +21,34 @@ export default function Messages() {
   const { user } = useAuthStore();
   const { conversations, loading, fetchConversations } = useMessageStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState('personal'); // 'personal' or 'group'
+  const [groupChats, setGroupChats] = useState([]);
+  const [groupChatsLoading, setGroupChatsLoading] = useState(false);
+
+  // Calculate unread counts
+  const personalUnreadCount = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+
+  const loadGroupChats = useCallback(async () => {
+    if (!user?.id) return;
+    setGroupChatsLoading(true);
+    try {
+      const { data, error } = await groupChatHelpers.getUserGroupChats(user.id);
+      if (data && !error) {
+        setGroupChats(data);
+      }
+    } catch (error) {
+      console.error('Error loading group chats:', error);
+    } finally {
+      setGroupChatsLoading(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     if (user?.id) {
       fetchConversations(user.id);
+      loadGroupChats();
     }
-  }, [user?.id]);
+  }, [user?.id, loadGroupChats]);
 
   // Subscribe to conversation updates
   useEffect(() => {
@@ -44,9 +66,12 @@ export default function Messages() {
   const onRefresh = useCallback(async () => {
     if (!user?.id) return;
     setRefreshing(true);
-    await fetchConversations(user.id);
+    await Promise.all([
+      fetchConversations(user.id),
+      loadGroupChats(),
+    ]);
     setRefreshing(false);
-  }, [user?.id]);
+  }, [user?.id, loadGroupChats]);
 
   const formatTime = (dateString) => {
     if (!dateString) return '';
@@ -73,6 +98,17 @@ export default function Messages() {
         conversationId: conversation.id,
         otherUserId: conversation.otherUser?.id,
         otherUserName: conversation.otherUser?.full_name,
+      },
+    });
+  };
+
+  const handleGroupChatPress = (groupChat) => {
+    router.push({
+      pathname: '/group-chat',
+      params: {
+        teamId: groupChat.teamId,
+        teamName: groupChat.teamName,
+        groupChatId: groupChat.id,
       },
     });
   };
@@ -130,37 +166,122 @@ export default function Messages() {
     );
   };
 
-  if (loading && conversations.length === 0) {
+  const renderGroupChat = ({ item }) => {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Messages</Text>
+      <TouchableOpacity
+        style={styles.conversationItem}
+        onPress={() => handleGroupChatPress(item)}
+      >
+        <View style={styles.avatarContainer}>
+          <View style={[styles.avatarPlaceholder, styles.groupAvatar]}>
+            <Ionicons name="people" size={24} color="#fff" />
+          </View>
         </View>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#007AFF" />
+        
+        <View style={styles.conversationContent}>
+          <View style={styles.conversationHeader}>
+            <Text style={styles.userName} numberOfLines={1}>
+              {item.teamName || item.name}
+            </Text>
+            <Text style={styles.timeText}>
+              {formatTime(item.lastMessage?.createdAt || item.lastMessageAt)}
+            </Text>
+          </View>
+          
+          <View style={styles.messagePreview}>
+            <Text style={styles.lastMessage} numberOfLines={1}>
+              {item.lastMessage 
+                ? `${item.lastMessage.senderName}: ${item.lastMessage.content}`
+                : 'No messages yet'}
+            </Text>
+          </View>
+          
+          <Text style={styles.roleText}>Team Group Chat</Text>
         </View>
-      </SafeAreaView>
+      </TouchableOpacity>
     );
-  }
+  };
+
+  const isLoading = activeTab === 'personal' 
+    ? (loading && conversations.length === 0)
+    : (groupChatsLoading && groupChats.length === 0);
+
+  const currentData = activeTab === 'personal' ? conversations : groupChats;
+  const renderItem = activeTab === 'personal' ? renderConversation : renderGroupChat;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
       </View>
+
+      {/* Tab Switcher */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'personal' && styles.activeTab]}
+          onPress={() => setActiveTab('personal')}
+        >
+          <Ionicons 
+            name="person" 
+            size={18} 
+            color={activeTab === 'personal' ? '#6366f1' : '#666'} 
+          />
+          <Text style={[styles.tabText, activeTab === 'personal' && styles.activeTabText]}>
+            Personal
+          </Text>
+          {personalUnreadCount > 0 && (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>
+                {personalUnreadCount > 99 ? '99+' : personalUnreadCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'group' && styles.activeTab]}
+          onPress={() => setActiveTab('group')}
+        >
+          <Ionicons 
+            name="people" 
+            size={18} 
+            color={activeTab === 'group' ? '#6366f1' : '#666'} 
+          />
+          <Text style={[styles.tabText, activeTab === 'group' && styles.activeTabText]}>
+            Group Chats
+          </Text>
+          {groupChats.length > 0 && (
+            <View style={[styles.tabBadge, styles.groupBadge]}>
+              <Text style={styles.tabBadgeText}>{groupChats.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
       
-      {conversations.length === 0 ? (
+      {isLoading ? (
         <View style={styles.center}>
-          <Ionicons name="chatbubbles-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No Conversations Yet</Text>
+          <ActivityIndicator size="large" color="#6366f1" />
+        </View>
+      ) : currentData.length === 0 ? (
+        <View style={styles.center}>
+          <Ionicons 
+            name={activeTab === 'personal' ? 'chatbubbles-outline' : 'people-outline'} 
+            size={64} 
+            color="#ccc" 
+          />
+          <Text style={styles.emptyTitle}>
+            {activeTab === 'personal' ? 'No Conversations Yet' : 'No Group Chats Yet'}
+          </Text>
           <Text style={styles.emptySubtitle}>
-            Start messaging team members from the Teams tab or by viewing their profiles.
+            {activeTab === 'personal' 
+              ? 'Start messaging team members from the Teams tab or by viewing their profiles.'
+              : 'Join a team to access group chats with your teammates.'}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={conversations}
-          renderItem={renderConversation}
+          data={currentData}
+          renderItem={renderItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -189,6 +310,53 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#333',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginHorizontal: 4,
+    gap: 6,
+  },
+  activeTab: {
+    backgroundColor: '#eef2ff',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#6366f1',
+  },
+  tabBadge: {
+    backgroundColor: '#6366f1',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  groupBadge: {
+    backgroundColor: '#22c55e',
+  },
+  tabBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
   },
   center: { 
     flex: 1, 
@@ -237,6 +405,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  groupAvatar: {
+    backgroundColor: '#6366f1',
   },
   avatarText: {
     fontSize: 22,

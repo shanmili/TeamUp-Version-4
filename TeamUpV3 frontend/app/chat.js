@@ -203,7 +203,7 @@ export default function Chat() {
       <KeyboardAvoidingView
         style={styles.content}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
       >
         {messagesLoading ? (
           <View style={styles.center}>
@@ -414,6 +414,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 16,
+    minHeight: 44,
     maxHeight: 100,
     marginRight: 8,
   },

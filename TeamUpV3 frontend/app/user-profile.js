@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -20,55 +22,62 @@ export default function UserProfile() {
   const params = useLocalSearchParams();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [messagingLoading, setMessagingLoading] = useState(false);
   const { user } = useAuthStore();
   const { startConversation } = useMessageStore();
   
   // Check if this is the current user's own profile
   const isOwnProfile = user?.id === params.userId || user?.id === userData?.id;
+
+  const loadUserProfile = useCallback(async () => {
+    try {
+      // If userData is passed directly as JSON
+      if (params.userData) {
+        setUserData(JSON.parse(params.userData));
+        return;
+      }
+      
+      // If userId is provided, fetch from Supabase
+      if (params.userId) {
+        const { data, error } = await profileHelpers.getProfile(params.userId);
+        
+        if (data && !error) {
+          setUserData({
+            id: data.id,
+            name: data.full_name,
+            email: data.email,
+            phone: data.phone,
+            role: data.role,
+            skills: data.skills || [],
+            interests: data.interests || [],
+            availability: data.availability,
+            description: data.description,
+            avatar_url: data.avatar_url,
+            createdAt: data.created_at,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+    }
+  }, [params.userId, params.userData]);
   
   // Load user profile from Supabase if userId is provided
   useEffect(() => {
-    const loadUserProfile = async () => {
-      try {
-        setLoading(true);
-        
-        // If userData is passed directly as JSON
-        if (params.userData) {
-          setUserData(JSON.parse(params.userData));
-          setLoading(false);
-          return;
-        }
-        
-        // If userId is provided, fetch from Supabase
-        if (params.userId) {
-          const { data, error } = await profileHelpers.getProfile(params.userId);
-          
-          if (data && !error) {
-            setUserData({
-              id: data.id,
-              name: data.full_name,
-              email: data.email,
-              phone: data.phone,
-              role: data.role,
-              skills: data.skills || [],
-              interests: data.interests || [],
-              availability: data.availability,
-              description: data.description,
-              avatar_url: data.avatar_url,
-              createdAt: data.created_at,
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error loading user profile:', error);
-      } finally {
-        setLoading(false);
-      }
+    const initLoad = async () => {
+      setLoading(true);
+      await loadUserProfile();
+      setLoading(false);
     };
-    
-    loadUserProfile();
-  }, [params.userId, params.userData]);
+    initLoad();
+  }, [loadUserProfile]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadUserProfile();
+    setRefreshing(false);
+  }, [loadUserProfile]);
 
   const handleMessage = async () => {
     if (!user?.id || !userData?.id || isOwnProfile) return;
@@ -132,14 +141,24 @@ export default function UserProfile() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Profile Header */}
         <View style={styles.profileHeader}>
-          <View style={styles.avatarLarge}>
-            <Text style={styles.avatarLargeText}>
-              {userData.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '??'}
-            </Text>
-          </View>
+          {userData.avatar_url ? (
+            <Image source={{ uri: userData.avatar_url }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatarLarge}>
+              <Text style={styles.avatarLargeText}>
+                {userData.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '??'}
+              </Text>
+            </View>
+          )}
           
           <Text style={styles.userName}>{userData.name || 'Unknown User'}</Text>
           
@@ -308,6 +327,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 16,
+  },
+  avatarImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     marginBottom: 16,
   },
   avatarLargeText: {
