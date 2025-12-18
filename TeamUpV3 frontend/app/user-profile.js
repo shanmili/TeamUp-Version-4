@@ -1,21 +1,109 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { profileHelpers } from '../lib/supabase';
+import useAuthStore from '../store/useAuthStore';
+import useMessageStore from '../store/useMessageStore';
 
 export default function UserProfile() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [messagingLoading, setMessagingLoading] = useState(false);
+  const { user } = useAuthStore();
+  const { startConversation } = useMessageStore();
   
-  // Parse user data from params
-  const userData = params.userData ? JSON.parse(params.userData) : null;
+  // Check if this is the current user's own profile
+  const isOwnProfile = user?.id === params.userId || user?.id === userData?.id;
+  
+  // Load user profile from Supabase if userId is provided
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      try {
+        setLoading(true);
+        
+        // If userData is passed directly as JSON
+        if (params.userData) {
+          setUserData(JSON.parse(params.userData));
+          setLoading(false);
+          return;
+        }
+        
+        // If userId is provided, fetch from Supabase
+        if (params.userId) {
+          const { data, error } = await profileHelpers.getProfile(params.userId);
+          
+          if (data && !error) {
+            setUserData({
+              id: data.id,
+              name: data.full_name,
+              email: data.email,
+              phone: data.phone,
+              role: data.role,
+              skills: data.skills || [],
+              interests: data.interests || [],
+              availability: data.availability,
+              description: data.description,
+              avatar_url: data.avatar_url,
+              createdAt: data.created_at,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadUserProfile();
+  }, [params.userId, params.userData]);
+
+  const handleMessage = async () => {
+    if (!user?.id || !userData?.id || isOwnProfile) return;
+    
+    setMessagingLoading(true);
+    try {
+      const conversation = await startConversation(user.id, userData.id);
+      if (conversation) {
+        router.push({
+          pathname: '/chat',
+          params: {
+            conversationId: conversation.id,
+            otherUserId: userData.id,
+            otherUserName: userData.name,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+    } finally {
+      setMessagingLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading profile...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!userData) {
     return (
@@ -64,6 +152,24 @@ export default function UserProfile() {
 
           {userData.description && (
             <Text style={styles.description}>{userData.description}</Text>
+          )}
+
+          {/* Message Button - only show if not own profile */}
+          {!isOwnProfile && (
+            <TouchableOpacity 
+              style={styles.messageButton} 
+              onPress={handleMessage}
+              disabled={messagingLoading}
+            >
+              {messagingLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+                  <Text style={styles.messageButtonText}>Message</Text>
+                </>
+              )}
+            </TouchableOpacity>
           )}
         </View>
 
@@ -236,6 +342,21 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
+  messageButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 24,
+    marginTop: 16,
+    gap: 8,
+  },
+  messageButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   section: {
     marginTop: 16,
     paddingHorizontal: 20,
@@ -306,6 +427,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  loadingText: {
+    fontSize: 15,
+    color: '#666',
+    marginTop: 12,
   },
   errorText: {
     fontSize: 16,

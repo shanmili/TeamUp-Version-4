@@ -1,6 +1,46 @@
 import { create } from 'zustand';
 import { teamHelpers } from '../lib/supabase';
 
+// Helper function to transform team data from database (snake_case) to frontend (camelCase)
+const transformTeamData = (team) => {
+  if (!team) return null;
+  
+  return {
+    id: team.id,
+    teamName: team.team_name,
+    description: team.description,
+    projectType: team.project_type,
+    teamSize: team.team_size,
+    duration: team.duration,
+    skills: team.skills || [],
+    status: team.status,
+    createdBy: team.created_by,
+    createdAt: team.created_at,
+    updatedAt: team.updated_at,
+    archivedAt: team.archived_at,
+    startDate: team.start_date,
+    endDate: team.end_date,
+    maxMembers: team.max_members || team.team_size,
+    // Transform members array - profiles data comes from the user_id join
+    members: team.team_members?.map(tm => {
+      // Handle null/undefined profiles safely
+      const profile = tm?.profiles ?? {};
+      return {
+        id: tm?.user_id || profile?.id || null,
+        name: profile?.full_name || 'Unknown',
+        email: profile?.email || '',
+        role: profile?.role || tm?.role || 'Member',
+        skills: profile?.skills ?? [],
+        interests: profile?.interests ?? [],
+        description: profile?.description || '',
+        phone: profile?.phone || '',
+        availability: profile?.availability || 'Available',
+        joinedAt: tm?.joined_at,
+      };
+    }).filter(m => m.id !== null) || [],
+  };
+};
+
 const useTeamStore = create((set, get) => ({
   // State
   teams: [],
@@ -17,7 +57,8 @@ const useTeamStore = create((set, get) => ({
       
       if (error) throw error;
       
-      set({ teams: data || [], loading: false });
+      const transformedTeams = data?.map(transformTeamData) || [];
+      set({ teams: transformedTeams, loading: false });
     } catch (error) {
       set({ error: error.message, loading: false });
     }
@@ -31,7 +72,8 @@ const useTeamStore = create((set, get) => ({
       
       if (error) throw error;
       
-      set({ myTeams: data || [], loading: false });
+      const transformedTeams = data?.map(transformTeamData) || [];
+      set({ myTeams: transformedTeams, loading: false });
     } catch (error) {
       set({ error: error.message, loading: false });
     }
@@ -57,14 +99,16 @@ const useTeamStore = create((set, get) => ({
 
       if (error) throw error;
 
+      const transformedTeam = transformTeamData(data);
+
       // Add to local state
       set((state) => ({
-        teams: [data, ...state.teams],
-        myTeams: [data, ...state.myTeams],
+        teams: [transformedTeam, ...state.teams],
+        myTeams: [transformedTeam, ...state.myTeams],
         loading: false,
       }));
 
-      return { success: true, data };
+      return { success: true, data: transformedTeam };
     } catch (error) {
       set({ error: error.message, loading: false });
       return { success: false, error: error.message };
@@ -86,7 +130,7 @@ const useTeamStore = create((set, get) => ({
     try {
       const { data, error} = await teamHelpers.getTeam(teamId);
       if (error) throw error;
-      return data;
+      return transformTeamData(data);
     } catch (error) {
       console.error('Get team error:', error);
       // Fallback to local state

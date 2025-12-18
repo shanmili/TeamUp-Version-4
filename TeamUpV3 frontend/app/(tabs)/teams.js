@@ -5,6 +5,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -45,6 +46,7 @@ export default function Teams() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [appliedTeams, setAppliedTeams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Load teams and notifications on mount
   useEffect(() => {
@@ -94,6 +96,25 @@ export default function Teams() {
     }
   };
 
+  const onRefresh = async () => {
+    try {
+      setRefreshing(true);
+      
+      // Reload all data
+      await loadTeams();
+      
+      if (user?.id) {
+        await loadMyTeams(user.id);
+        await loadNotifications(user.id);
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleNotificationClick = async (notification) => {
     // Mark as read
     await markAsRead(notification.id);
@@ -127,7 +148,7 @@ export default function Teams() {
     return `${diffInDays}d ago`;
   };
 
-  const handleJoinTeam = (team, e) => {
+  const handleJoinTeam = async (team, e) => {
     // Prevent card click event
     e?.stopPropagation();
     
@@ -138,32 +159,37 @@ export default function Teams() {
     }
 
     // Check if already a member
-    const isMember = team.members?.some(m => m.id === user?.email || m.email === user?.email);
+    const isMember = team.members?.some(m => m.id === user?.id || m.email === user?.email);
     if (isMember) {
       Alert.alert('Already a Member', 'You are already a member of this team.');
       return;
     }
 
-    // Create join request notification
-    addNotification({
+    // Create join request notification for the team lead
+    const result = await addNotification({
       type: 'join_request',
       title: 'New Join Request',
-      message: `${user?.name || user?.email || 'A user'} wants to join ${team.teamName}`,
+      message: `${profile?.name || user?.email || 'A user'} wants to join ${team.teamName}`,
       teamId: team.id,
       teamName: team.teamName,
-      userId: user?.email || user?.id,
-      userName: user?.name || user?.email || 'User',
-      userRole: role,
+      recipientId: team.createdBy, // Send to team lead
+      senderId: user?.id,
+      senderName: profile?.name || user?.email || 'User',
+      senderRole: role || '',
     });
 
-    // Track that user has applied
-    setAppliedTeams([...appliedTeams, team.id]);
+    if (result.success) {
+      // Track that user has applied
+      setAppliedTeams([...appliedTeams, team.id]);
 
-    Alert.alert(
-      'Request Sent',
-      `Your request to join ${team.teamName} has been sent to the team lead.`,
-      [{ text: 'OK' }]
-    );
+      Alert.alert(
+        'Request Sent',
+        `Your request to join ${team.teamName} has been sent to the team lead.`,
+        [{ text: 'OK' }]
+      );
+    } else {
+      Alert.alert('Error', 'Failed to send join request. Please try again.');
+    }
   };
 
   const isAlreadyApplied = (teamId) => {
@@ -319,12 +345,27 @@ export default function Teams() {
       </Modal>
 
       {/* Main content: Display actual teams from store */}
-      <ScrollView style={styles.screen} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.screen} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#007AFF']}
+            tintColor="#007AFF"
+          />
+        }
+      >
         <Text style={styles.screenTitle}>
           {isTeamLead ? 'My Teams' : 'All Teams'}
         </Text>
 
-        {teamsToDisplay.length > 0 ? (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <Text style={styles.loadingText}>Loading teams...</Text>
+          </View>
+        ) : teamsToDisplay.length > 0 ? (
           teamsToDisplay.map((team) => (
             <View key={team.id} style={styles.teamCardContainer}>
               <TouchableOpacity 
@@ -758,5 +799,13 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 15,
     fontWeight: '700',
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 15,
+    color: '#999',
   },
 });

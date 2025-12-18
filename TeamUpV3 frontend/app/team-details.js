@@ -2,16 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-    Alert,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import useAuthStore from '../store/useAuthStore';
+import useMessageStore from '../store/useMessageStore';
 import useTeamStore from '../store/useTeamStore';
 
 export default function TeamDetails() {
@@ -26,15 +27,42 @@ export default function TeamDetails() {
   const role = useAuthStore((s) => s.profile?.role);
   const currentUser = useAuthStore((s) => s.user);
   const isTeamLead = typeof role === 'string' && role.toLowerCase().includes('lead');
+  const { startConversation } = useMessageStore();
   
   const [team, setTeam] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [messagingMemberId, setMessagingMemberId] = useState(null);
 
   useEffect(() => {
-    if (teamId) {
-      const teamData = getTeamById(teamId);
-      setTeam(teamData);
-    }
+    const loadTeam = async () => {
+      if (teamId) {
+        setLoading(true);
+        try {
+          const teamData = await getTeamById(teamId);
+          console.log('Loaded team data:', teamData);
+          setTeam(teamData);
+        } catch (error) {
+          console.error('Error loading team:', error);
+          Alert.alert('Error', 'Failed to load team details');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+    
+    loadTeam();
   }, [teamId]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.center}>
+          <Text style={styles.loadingText}>Loading team details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!team) {
     return (
@@ -58,11 +86,15 @@ export default function TeamDetails() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Finish',
-          onPress: () => {
-            updateTeam(teamId, { status: 'finished', archivedAt: new Date().toISOString() });
-            Alert.alert('Success', 'Team has been finished and archived.', [
-              { text: 'OK', onPress: () => router.back() }
-            ]);
+          onPress: async () => {
+            const result = await updateTeam(teamId, { status: 'finished', archivedAt: new Date().toISOString() });
+            if (result.success) {
+              Alert.alert('Success', 'Team has been finished and archived.', [
+                { text: 'OK', onPress: () => router.back() }
+              ]);
+            } else {
+              Alert.alert('Error', result.error || 'Failed to finish team');
+            }
           },
         },
       ]
@@ -78,11 +110,15 @@ export default function TeamDetails() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteTeam(teamId);
-            Alert.alert('Team Deleted', 'The team has been terminated.', [
-              { text: 'OK', onPress: () => router.back() }
-            ]);
+          onPress: async () => {
+            const result = await deleteTeam(teamId);
+            if (result.success) {
+              Alert.alert('Team Deleted', 'The team has been terminated.', [
+                { text: 'OK', onPress: () => router.back() }
+              ]);
+            } else {
+              Alert.alert('Error', result.error || 'Failed to delete team');
+            }
           },
         },
       ]
@@ -90,19 +126,24 @@ export default function TeamDetails() {
   };
 
   const handleRemoveMember = (member) => {
+    const memberName = member.name || member.full_name || 'this member';
     Alert.alert(
       'Remove Member',
-      `Remove ${member.name} from the team?`,
+      `Remove ${memberName} from the team?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () => {
-            removeMemberFromTeam(teamId, member.id);
-            const updatedTeam = getTeamById(teamId);
-            setTeam(updatedTeam);
-            Alert.alert('Success', `${member.name} has been removed from the team.`);
+          onPress: async () => {
+            const result = await removeMemberFromTeam(teamId, member.id);
+            if (result.success) {
+              const updatedTeam = await getTeamById(teamId);
+              setTeam(updatedTeam);
+              Alert.alert('Success', `${memberName} has been removed from the team.`);
+            } else {
+              Alert.alert('Error', result.error || 'Failed to remove member');
+            }
           },
         },
       ]
@@ -110,24 +151,53 @@ export default function TeamDetails() {
   };
 
   const handleViewProfile = (member) => {
-    // Navigate to member profile with user data
-    router.push({
-      pathname: '/user-profile',
-      params: {
-        userData: JSON.stringify({
-          id: member.id,
-          name: member.name,
-          email: member.email || member.id,
-          role: member.role || member.userRole || 'Member',
-          skills: member.skills || [],
-          interests: member.interests || [],
-          description: member.description || '',
-          phone: member.phone || '',
-          availability: member.availability || 'Available',
-          joinedAt: member.joinedAt || new Date().toISOString(),
-        })
+    // Navigate to member profile - use userId to fetch from Supabase
+    if (member.id) {
+      router.push(`/user-profile?userId=${member.id}`);
+    } else {
+      // Fallback to passing user data directly
+      router.push({
+        pathname: '/user-profile',
+        params: {
+          userData: JSON.stringify({
+            id: member.id,
+            name: member.name || member.full_name || 'Unknown',
+            email: member.email || '',
+            role: member.role || 'Member',
+            skills: member.skills || [],
+            interests: member.interests || [],
+            description: member.description || '',
+            phone: member.phone || '',
+            availability: member.availability || 'Available',
+            joinedAt: member.joinedAt || member.joined_at || new Date().toISOString(),
+          })
+        }
+      });
+    }
+  };
+
+  const handleMessageMember = async (member) => {
+    if (!currentUser?.id || !member.id || member.id === currentUser.id) return;
+    
+    setMessagingMemberId(member.id);
+    try {
+      const conversation = await startConversation(currentUser.id, member.id);
+      if (conversation) {
+        router.push({
+          pathname: '/chat',
+          params: {
+            conversationId: conversation.id,
+            otherUserId: member.id,
+            otherUserName: member.name || member.full_name || 'Unknown',
+          },
+        });
       }
-    });
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      Alert.alert('Error', 'Failed to start conversation');
+    } finally {
+      setMessagingMemberId(null);
+    }
   };
 
   return (
@@ -205,11 +275,11 @@ export default function TeamDetails() {
                 <View style={styles.memberInfo}>
                   <View style={styles.avatar}>
                     <Text style={styles.avatarText}>
-                      {member.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                      {(member.name || member.full_name || 'U').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                     </Text>
                   </View>
                   <View style={styles.memberDetails}>
-                    <Text style={styles.memberName}>{member.name}</Text>
+                    <Text style={styles.memberName}>{member.name || member.full_name || 'Unknown'}</Text>
                     <Text style={styles.memberJoined}>
                       Joined {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : 'Recently'}
                     </Text>
@@ -217,6 +287,24 @@ export default function TeamDetails() {
                 </View>
                 
                 <View style={styles.memberActions}>
+                  {/* Message button - don't show for self */}
+                  {member.id !== currentUser?.id && (
+                    <TouchableOpacity 
+                      style={styles.messageButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleMessageMember(member);
+                      }}
+                      disabled={messagingMemberId === member.id}
+                    >
+                      <Ionicons 
+                        name="chatbubble-outline" 
+                        size={18} 
+                        color={messagingMemberId === member.id ? "#ccc" : "#007AFF"} 
+                      />
+                    </TouchableOpacity>
+                  )}
+                  
                   <Ionicons name="chevron-forward" size={20} color="#999" />
                   
                   {isTeamLead && (
@@ -242,7 +330,7 @@ export default function TeamDetails() {
         </View>
 
         {/* Team Actions (Only for Team Leads) */}
-        {isTeamLead && team.status === 'active' && (
+        {isTeamLead && team.status !== 'finished' && (
           <View style={styles.actionsSection}>
             <Text style={styles.sectionTitle}>Team Actions</Text>
             
@@ -431,6 +519,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  messageButton: {
+    padding: 8,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 20,
+  },
   removeButton: {
     padding: 8,
     marginLeft: 8,
@@ -500,6 +593,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#999',
   },
   errorText: {
     fontSize: 16,

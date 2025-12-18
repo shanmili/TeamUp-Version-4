@@ -173,7 +173,16 @@ export function SignUpScreen() {
                 const result = await signUp(email, password, fullName);
                 
                 if (result.success) {
-                  router.replace('/setup/skills');
+                  // Check if email confirmation is required
+                  if (result.emailConfirmationRequired) {
+                    Alert.alert(
+                      'Confirm Your Email',
+                      'Please check your email inbox and click the confirmation link before signing in.',
+                      [{ text: 'OK', onPress: () => router.replace('/signin') }]
+                    );
+                  } else {
+                    router.replace('/setup/skills');
+                  }
                 } else {
                   Alert.alert('Sign Up Failed', result.error || 'An error occurred');
                 }
@@ -283,7 +292,16 @@ export function SignInScreen() {
                 if (result.success) {
                   router.replace('/(tabs)/teams');
                 } else {
-                  Alert.alert('Sign In Failed', result.error || 'Invalid credentials');
+                  // Provide more helpful error messages
+                  let errorMessage = result.error || 'Invalid credentials';
+                  
+                  if (errorMessage.includes('Email not confirmed')) {
+                    errorMessage = 'Please confirm your email address. Check your inbox for the confirmation link.';
+                  } else if (errorMessage.includes('Invalid login credentials')) {
+                    errorMessage = 'Invalid email or password. If you just signed up, please confirm your email first.';
+                  }
+                  
+                  Alert.alert('Sign In Failed', errorMessage);
                 }
               }}
             >

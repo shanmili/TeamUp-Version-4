@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS join_requests (
   UNIQUE(team_id, user_id)
 );
 
+-- Conversations Table (for direct messages between users)
+CREATE TABLE IF NOT EXISTS conversations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  participant_1 UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  participant_2 UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  last_message_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(participant_1, participant_2)
+);
+
+-- Messages Table
+CREATE TABLE IF NOT EXISTS messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_teams_created_by ON teams(created_by);
 CREATE INDEX IF NOT EXISTS idx_teams_status ON teams(status);
@@ -85,6 +105,12 @@ CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_join_requests_team_id ON join_requests(team_id);
 CREATE INDEX IF NOT EXISTS idx_join_requests_user_id ON join_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_join_requests_status ON join_requests(status);
+CREATE INDEX IF NOT EXISTS idx_conversations_participant_1 ON conversations(participant_1);
+CREATE INDEX IF NOT EXISTS idx_conversations_participant_2 ON conversations(participant_2);
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON conversations(last_message_at);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
 -- Row Level Security (RLS) Policies
 
@@ -94,6 +120,8 @@ ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE join_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: Users can view all profiles but only update their own
 CREATE POLICY "Profiles are viewable by everyone" ON profiles
@@ -173,6 +201,45 @@ CREATE POLICY "Team creators can update join requests" ON join_requests
       SELECT 1 FROM teams 
       WHERE teams.id = join_requests.team_id 
       AND teams.created_by = auth.uid()
+    )
+  );
+
+-- Conversations: Users can only see their own conversations
+CREATE POLICY "Users can view own conversations" ON conversations
+  FOR SELECT USING (auth.uid() = participant_1 OR auth.uid() = participant_2);
+
+CREATE POLICY "Users can create conversations" ON conversations
+  FOR INSERT WITH CHECK (auth.uid() = participant_1 OR auth.uid() = participant_2);
+
+CREATE POLICY "Users can update own conversations" ON conversations
+  FOR UPDATE USING (auth.uid() = participant_1 OR auth.uid() = participant_2);
+
+-- Messages: Users can see messages in their conversations
+CREATE POLICY "Users can view messages in their conversations" ON messages
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM conversations 
+      WHERE conversations.id = messages.conversation_id 
+      AND (conversations.participant_1 = auth.uid() OR conversations.participant_2 = auth.uid())
+    )
+  );
+
+CREATE POLICY "Users can send messages" ON messages
+  FOR INSERT WITH CHECK (
+    auth.uid() = sender_id AND
+    EXISTS (
+      SELECT 1 FROM conversations 
+      WHERE conversations.id = messages.conversation_id 
+      AND (conversations.participant_1 = auth.uid() OR conversations.participant_2 = auth.uid())
+    )
+  );
+
+CREATE POLICY "Users can update own messages" ON messages
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM conversations 
+      WHERE conversations.id = messages.conversation_id 
+      AND (conversations.participant_1 = auth.uid() OR conversations.participant_2 = auth.uid())
     )
   );
 

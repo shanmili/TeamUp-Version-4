@@ -53,7 +53,8 @@ const useNotificationStore = create((set, get) => ({
   unsubscribe: () => {
     const subscription = get().subscription;
     if (subscription) {
-      notificationHelpers.unsubscribe(subscription);
+      // Call unsubscribe directly on the subscription object
+      subscription.unsubscribe();
       set({ subscription: null });
     }
   },

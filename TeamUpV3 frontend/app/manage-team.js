@@ -47,25 +47,29 @@ export default function ManageTeam() {
   const handleApprove = (request) => {
     Alert.alert(
       'Approve Request',
-      `Add ${request.userName} to your team?`,
+      `Add ${request.senderName || 'this user'} to your team?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Approve',
-          onPress: () => {
+          onPress: async () => {
             // Add member to the team
             const newMember = {
-              id: request.userId,
-              name: request.userName,
+              id: request.senderId,
+              name: request.senderName,
+              role: request.senderRole,
               joinedAt: new Date().toISOString(),
             };
             
-            addMemberToTeam(request.teamId, newMember);
+            const result = await addMemberToTeam(request.teamId, newMember);
             
-            // Remove notification
-            deleteNotification(request.id);
-            
-            Alert.alert('Success', `${request.userName} has been added to your team!`);
+            if (result?.success) {
+              // Remove notification
+              await deleteNotification(request.id);
+              Alert.alert('Success', `${request.senderName || 'User'} has been added to your team!`);
+            } else {
+              Alert.alert('Error', result?.error || 'Failed to add member to team');
+            }
           },
         },
       ]
@@ -75,15 +79,15 @@ export default function ManageTeam() {
   const handleReject = (request) => {
     Alert.alert(
       'Reject Request',
-      `Reject ${request.userName}'s request to join?`,
+      `Reject ${request.senderName || 'this user'}'s request to join?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Reject',
           style: 'destructive',
-          onPress: () => {
-            deleteNotification(request.id);
-            Alert.alert('Request Rejected', `${request.userName}'s request has been rejected.`);
+          onPress: async () => {
+            await deleteNotification(request.id);
+            Alert.alert('Request Rejected', `${request.senderName || 'User'}'s request has been rejected.`);
           },
         },
       ]
@@ -128,7 +132,15 @@ export default function ManageTeam() {
             <View key={request.id} style={styles.requestCard}>
               {/* Header with name and time */}
               <View style={styles.cardHeader}>
-                <Text style={styles.name}>{request.userName}</Text>
+                <View style={styles.avatarSmall}>
+                  <Text style={styles.avatarText}>
+                    {(request.senderName || 'U').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.headerInfo}>
+                  <Text style={styles.name}>{request.senderName || 'Unknown User'}</Text>
+                  <Text style={styles.roleText}>{request.senderRole || 'No role specified'}</Text>
+                </View>
                 <View style={styles.badgeContainer}>
                   <Text style={styles.time}>{getTimeAgo(request.createdAt)}</Text>
                 </View>
@@ -139,6 +151,17 @@ export default function ManageTeam() {
 
               {/* Message */}
               <Text style={styles.message}>{request.message}</Text>
+
+              {/* View Profile Button */}
+              <TouchableOpacity 
+                style={styles.viewProfileButton}
+                onPress={() => {
+                  // Navigate to user profile with sender ID
+                  router.push(`/user-profile?userId=${request.senderId}`);
+                }}
+              >
+                <Text style={styles.viewProfileText}>👤 View Full Profile</Text>
+              </TouchableOpacity>
 
               {/* Action Buttons */}
               <View style={styles.buttonContainer}>
@@ -230,14 +253,34 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  avatarSmall: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  headerInfo: {
+    flex: 1,
   },
   name: {
     fontSize: 16,
     fontWeight: '700',
-    flex: 1,
+  },
+  roleText: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginTop: 2,
   },
   badgeContainer: {
     alignItems: 'flex-end',
@@ -255,7 +298,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  viewProfileButton: {
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  viewProfileText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   buttonContainer: {
     flexDirection: 'row',
