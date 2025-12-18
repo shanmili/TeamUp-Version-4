@@ -3,67 +3,68 @@ import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ScrollView } from 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import useAuthStore from '../../store/useAuthStore';
 
-export default function SkillsScreen() {
+export default function InterestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [selectedSkills, setSelectedSkills] = useState(['Database Design']);
+  const [selectedInterests, setSelectedInterests] = useState([]);
 
-  const skills = [
-    'JavaScript', 'React', 'Node.js', 'Python',
-    'Java', 'C++', 'Database Design', 'UI/UX Design',
-    'Machine Learning', 'Data Analysis', 'Project Management',
-    'Research', 'Technical Writing', 'Testing',
-    'Mobile Development', 'Web Development', 'API Development', 'DevOps'
+  const interests = [
+    'Web Applications', 'Mobile Apps', 'AI/ML',
+    'Data Science', 'IoT', 'Blockchain',
+    'Gaming', 'Healthcare Tech', 'FinTech',
+    'Education Tech', 'E-commerce', 'Social Media',
+    'Security', 'Sustainability', 'AR/VR', 'Automation'
   ];
 
-  const toggleSkill = (skill) => {
-    if (selectedSkills.includes(skill)) {
-      setSelectedSkills(selectedSkills.filter(s => s !== skill));
+  const toggleInterest = (interest) => {
+    if (selectedInterests.includes(interest)) {
+      setSelectedInterests(selectedInterests.filter(i => i !== interest));
     } else {
-      setSelectedSkills([...selectedSkills, skill]);
+      setSelectedInterests([...selectedInterests, interest]);
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
-
+      
       {/* Header */}
-      <View style={[styles.header, { paddingTop: 8 + insets.top }]}>
+      <View style={[styles.header, { paddingTop: 8 + insets.top }]}> 
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Feather name="chevron-left" size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.stepText}>Step 1 of 3</Text>
+        <Text style={styles.stepText}>Step 2 of 3</Text>
       </View>
 
       {/* Progress Bar */}
       <View style={styles.progressContainer}>
-        <View style={[styles.progressBar, { width: '33%' }]} />
+        <View style={[styles.progressBar, { width: '66%' }]} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          <Text style={styles.title}>What are your skills?</Text>
+          <Text style={styles.title}>What interests you?</Text>
           <Text style={styles.subtitle}>
-            Select the technical skills you have experience with
+            Choose the project areas that excite you most
           </Text>
 
           <View style={styles.chipsContainer}>
-            {skills.map((skill) => (
+            {interests.map((interest) => (
               <TouchableOpacity
-                key={skill}
+                key={interest}
                 style={[
                   styles.chip,
-                  selectedSkills.includes(skill) && styles.chipSelected
+                  selectedInterests.includes(interest) && styles.chipSelected
                 ]}
-                onPress={() => toggleSkill(skill)}
+                onPress={() => toggleInterest(interest)}
               >
                 <Text style={[
                   styles.chipText,
-                  selectedSkills.includes(skill) && styles.chipTextSelected
+                  selectedInterests.includes(interest) && styles.chipTextSelected
                 ]}>
-                  {skill}
+                  {interest}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -73,8 +74,12 @@ export default function SkillsScreen() {
 
       <View style={[styles.buttonContainer, { bottom: insets.bottom || 0 }]}> 
         <TouchableOpacity 
-          style={styles.primaryButton}
-          onPress={() => router.push('/setup/interests')}
+          style={[styles.primaryButton, selectedInterests.length === 0 && styles.buttonDisabled]}
+          onPress={() => {
+            useAuthStore.getState().setProfileInterests(selectedInterests);
+            router.push('/setup/role');
+          }}
+          disabled={selectedInterests.length === 0}
         >
           <Text style={styles.primaryButtonText}>Continue</Text>
         </TouchableOpacity>
@@ -178,6 +183,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
+  },
+  buttonDisabled: {
+    backgroundColor: '#e5e7eb',
   },
   primaryButtonText: {
     color: '#fff',

@@ -1,17 +1,16 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TeamUpOnboarding() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   return (
-    <SafeAreaView style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
+    <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}> 
       <StatusBar barStyle="dark-content" />
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}>
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={styles.logo}>
@@ -75,7 +74,7 @@ export default function TeamUpOnboarding() {
             <Text style={styles.secondaryButtonText}>I Already Have an Account</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -86,7 +85,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   content: {
-    flex: 1,
     paddingHorizontal: 24,
     paddingTop: 40,
   },
@@ -116,7 +114,7 @@ const styles = StyleSheet.create({
     marginBottom: 48,
   },
   featuresContainer: {
-    flex: 1,
+    
   },
   featureCard: {
     flexDirection: 'row',

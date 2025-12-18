@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ScrollView } from 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import useAuthStore from '../../store/useAuthStore';
 
 export default function RoleScreen() {
   const router = useRouter();
@@ -80,7 +81,11 @@ export default function RoleScreen() {
       <View style={[styles.buttonContainer, { bottom: insets.bottom || 0 }]}> 
         <TouchableOpacity 
           style={styles.primaryButton}
-          onPress={() => router.replace('/')}
+          onPress={() => {
+            // persist role to store
+            useAuthStore.getState().setProfileRole(selectedRole);
+            router.replace('/(tabs)/teams');
+          }}
         >
           <Text style={styles.primaryButtonText}>Complete Profile</Text>
         </TouchableOpacity>
@@ -165,7 +170,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   rolesContainer: {
-    gap: 16,
+    // React Native StyleSheet does not support `gap`; use margins on children instead.
   },
   roleCard: {
     flexDirection: 'row',
