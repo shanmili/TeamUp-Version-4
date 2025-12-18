@@ -26,12 +26,14 @@ export default function TeamDetails() {
   
   const role = useAuthStore((s) => s.profile?.role);
   const currentUser = useAuthStore((s) => s.user);
-  const isTeamLead = typeof role === 'string' && role.toLowerCase().includes('lead');
   const { startConversation } = useMessageStore();
   
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [messagingMemberId, setMessagingMemberId] = useState(null);
+
+  // Check if current user is the creator of THIS team (not just if they have lead role)
+  const isTeamCreator = team?.createdBy === currentUser?.id;
 
   useEffect(() => {
     const loadTeam = async () => {
@@ -245,6 +247,25 @@ export default function TeamDetails() {
               {team.members?.length || 0} / {team.teamSize || '?'} members
             </Text>
           </View>
+
+          {/* Team Lead Info */}
+          {team.createdByProfile && (
+            <TouchableOpacity 
+              style={styles.teamLeadRow}
+              onPress={() => router.push(`/user-profile?userId=${team.createdBy}`)}
+            >
+              <View style={styles.teamLeadAvatar}>
+                <Text style={styles.teamLeadAvatarText}>
+                  {team.createdByProfile.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '??'}
+                </Text>
+              </View>
+              <View style={styles.teamLeadInfo}>
+                <Text style={styles.teamLeadLabel}>Team Lead</Text>
+                <Text style={styles.teamLeadName}>{team.createdByProfile.name || 'Unknown'}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
           
           {team.skills && team.skills.length > 0 && (
             <View style={styles.skillsSection}>
@@ -307,7 +328,7 @@ export default function TeamDetails() {
                   
                   <Ionicons name="chevron-forward" size={20} color="#999" />
                   
-                  {isTeamLead && (
+                  {isTeamCreator && (
                     <TouchableOpacity 
                       style={styles.removeButton}
                       onPress={(e) => {
@@ -329,8 +350,8 @@ export default function TeamDetails() {
           )}
         </View>
 
-        {/* Team Actions (Only for Team Leads) */}
-        {isTeamLead && team.status !== 'finished' && (
+        {/* Team Actions (Only for Team Creator) */}
+        {isTeamCreator && team.status !== 'finished' && (
           <View style={styles.actionsSection}>
             <Text style={styles.sectionTitle}>Team Actions</Text>
             
@@ -439,6 +460,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginLeft: 8,
+  },
+  teamLeadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF8E1',
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  teamLeadAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF9800',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  teamLeadAvatarText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  teamLeadInfo: {
+    flex: 1,
+  },
+  teamLeadLabel: {
+    fontSize: 11,
+    color: '#F57C00',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  teamLeadName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
   },
   skillsSection: {
     marginTop: 12,

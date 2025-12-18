@@ -15,6 +15,12 @@ const transformTeamData = (team) => {
     skills: team.skills || [],
     status: team.status,
     createdBy: team.created_by,
+    createdByProfile: team.created_by_profile ? {
+      id: team.created_by_profile.id,
+      name: team.created_by_profile.full_name,
+      email: team.created_by_profile.email,
+      role: team.created_by_profile.role,
+    } : null,
     createdAt: team.created_at,
     updatedAt: team.updated_at,
     archivedAt: team.archived_at,
@@ -45,6 +51,7 @@ const useTeamStore = create((set, get) => ({
   // State
   teams: [],
   myTeams: [],
+  joinedTeams: [],
   archivedTeams: [],
   loading: false,
   error: null,
@@ -64,7 +71,7 @@ const useTeamStore = create((set, get) => ({
     }
   },
 
-  // Load user's teams from Supabase
+  // Load user's created teams from Supabase (teams they created as lead)
   loadMyTeams: async (userId) => {
     try {
       set({ loading: true, error: null });
@@ -74,6 +81,21 @@ const useTeamStore = create((set, get) => ({
       
       const transformedTeams = data?.map(transformTeamData) || [];
       set({ myTeams: transformedTeams, loading: false });
+    } catch (error) {
+      set({ error: error.message, loading: false });
+    }
+  },
+
+  // Load teams user has joined (as a member, not creator)
+  loadJoinedTeams: async (userId) => {
+    try {
+      set({ loading: true, error: null });
+      const { data, error } = await teamHelpers.getJoinedTeams(userId);
+      
+      if (error) throw error;
+      
+      const transformedTeams = data?.map(transformTeamData) || [];
+      set({ joinedTeams: transformedTeams, loading: false });
     } catch (error) {
       set({ error: error.message, loading: false });
     }

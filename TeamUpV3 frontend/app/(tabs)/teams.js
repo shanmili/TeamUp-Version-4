@@ -27,9 +27,11 @@ export default function Teams() {
   const isTeamLead = typeof role === 'string' && role.toLowerCase().includes('lead');
   
   const myTeams = useTeamStore((s) => s.myTeams);
+  const joinedTeams = useTeamStore((s) => s.joinedTeams);
   const allTeams = useTeamStore((s) => s.teams);
   const loadTeams = useTeamStore((s) => s.loadTeams);
   const loadMyTeams = useTeamStore((s) => s.loadMyTeams);
+  const loadJoinedTeams = useTeamStore((s) => s.loadJoinedTeams);
   const searchTeamsFunc = useTeamStore((s) => s.searchTeams);
   
   const notifications = useNotificationStore((s) => s.notifications);
@@ -58,8 +60,11 @@ export default function Teams() {
         await loadTeams();
         
         if (user?.id) {
-          // Load user's teams
+          // Load user's created teams (for team leads)
           await loadMyTeams(user.id);
+          
+          // Load teams user has joined (for members)
+          await loadJoinedTeams(user.id);
           
           // Load notifications
           await loadNotifications(user.id);
@@ -105,6 +110,7 @@ export default function Teams() {
       
       if (user?.id) {
         await loadMyTeams(user.id);
+        await loadJoinedTeams(user.id);
         await loadNotifications(user.id);
       }
     } catch (error) {
@@ -196,13 +202,23 @@ export default function Teams() {
     return appliedTeams.includes(teamId);
   };
 
+  // Check if user is already a member of a team
+  const isAlreadyMember = (team) => {
+    return team.members?.some(m => m.id === user?.id || m.email === user?.email);
+  };
+
   const teamsToDisplay = searchQuery.trim() ? filteredTeams : (isTeamLead ? myTeams : allTeams);
+
+  // For regular members, show their joined teams
+  const memberTeams = joinedTeams;
+  const hasJoinedTeams = !isTeamLead && memberTeams.length > 0;
 
   // Debug: Log the teams data
   console.log('Teams Debug:', {
     role,
     isTeamLead,
     myTeamsCount: myTeams.length,
+    joinedTeamsCount: joinedTeams.length,
     allTeamsCount: allTeams.length,
     teamsToDisplayCount: teamsToDisplay.length,
     myTeams,
@@ -357,6 +373,71 @@ export default function Teams() {
           />
         }
       >
+        {/* My Teams Section for Members (joined teams) */}
+        {hasJoinedTeams && !searchQuery.trim() && (
+          <>
+            <Text style={styles.screenTitle}>My Teams</Text>
+            {memberTeams.map((team) => (
+              <View key={team.id} style={styles.teamCardContainer}>
+                <TouchableOpacity 
+                  style={styles.teamCard}
+                  onPress={() => {
+                    router.push(`/team-details?teamId=${team.id}`);
+                  }}
+                >
+                  <View style={styles.teamHeader}>
+                    <Text style={styles.teamName}>{team.teamName}</Text>
+                    <View style={[styles.statusBadge, styles.memberBadge]}>
+                      <Text style={[styles.statusText, { color: '#007AFF' }]}>Member</Text>
+                    </View>
+                  </View>
+                  
+                  <Text style={styles.teamDescription} numberOfLines={2}>
+                    {team.description}
+                  </Text>
+                  
+                  {team.projectType && (
+                    <View style={styles.projectTypeContainer}>
+                      <Ionicons name="folder-outline" size={14} color="#666" />
+                      <Text style={styles.projectType}>{team.projectType}</Text>
+                    </View>
+                  )}
+                  
+                  {team.skills && team.skills.length > 0 && (
+                    <View style={styles.skillsContainer}>
+                      {team.skills.slice(0, 3).map((skill, index) => (
+                        <View key={index} style={styles.skillChip}>
+                          <Text style={styles.skillText}>{skill}</Text>
+                        </View>
+                      ))}
+                      {team.skills.length > 3 && (
+                        <Text style={styles.moreSkills}>+{team.skills.length - 3} more</Text>
+                      )}
+                    </View>
+                  )}
+                  
+                  <View style={styles.teamFooter}>
+                    <View style={styles.footerItem}>
+                      <Ionicons name="people-outline" size={16} color="#666" />
+                      <Text style={styles.footerText}>
+                        {team.members?.length || 0}/{team.teamSize || '?'} members
+                      </Text>
+                    </View>
+                    {team.duration && (
+                      <View style={styles.footerItem}>
+                        <Ionicons name="time-outline" size={16} color="#666" />
+                        <Text style={styles.footerText}>{team.duration}</Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </View>
+            ))}
+            
+            <View style={styles.sectionDivider} />
+          </>
+        )}
+
         <Text style={styles.screenTitle}>
           {isTeamLead ? 'My Teams' : 'All Teams'}
         </Text>
@@ -421,8 +502,8 @@ export default function Teams() {
                 </View>
               </TouchableOpacity>
               
-              {/* Join button for non-team-lead users */}
-              {!isTeamLead && (
+              {/* Join button for non-team-lead users - hide if already a member */}
+              {!isTeamLead && !isAlreadyMember(team) && (
                 <TouchableOpacity
                   style={[
                     styles.joinButton,
@@ -588,6 +669,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+  },
+  memberBadge: {
+    backgroundColor: '#E3F2FD',
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#E0E0E0',
+    marginHorizontal: 20,
+    marginVertical: 16,
   },
   statusText: {
     fontSize: 12,

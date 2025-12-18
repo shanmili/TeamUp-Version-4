@@ -121,7 +121,7 @@ export const teamHelpers = {
     return { data, error };
   },
 
-  // Get user's teams
+  // Get user's created teams (as team lead)
   getMyTeams: async (userId) => {
     const { data, error } = await supabase
       .from('teams')
@@ -137,6 +137,44 @@ export const teamHelpers = {
       `)
       .eq('created_by', userId)
       .order('created_at', { ascending: false });
+    return { data, error };
+  },
+
+  // Get teams where user is a member (joined teams)
+  getJoinedTeams: async (userId) => {
+    // First get team_ids where user is a member
+    const { data: memberships, error: memberError } = await supabase
+      .from('team_members')
+      .select('team_id')
+      .eq('user_id', userId);
+    
+    if (memberError) return { data: null, error: memberError };
+    
+    if (!membererships || memberships.length === 0) {
+      return { data: [], error: null };
+    }
+    
+    const teamIds = memberships.map(m => m.team_id);
+    
+    // Get teams where user is a member but NOT the creator
+    const { data, error } = await supabase
+      .from('teams')
+      .select(`
+        *,
+        created_by_profile:profiles!teams_created_by_fkey(id, full_name, email, role),
+        team_members(
+          id,
+          user_id,
+          joined_at,
+          role,
+          profiles:user_id(id, full_name, email, role, skills, interests, description, phone, availability)
+        )
+      `)
+      .in('id', teamIds)
+      .neq('created_by', userId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+    
     return { data, error };
   },
 
