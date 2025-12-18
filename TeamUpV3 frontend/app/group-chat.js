@@ -251,8 +251,7 @@ export default function GroupChat() {
           data={groupMessagesByDate()}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
-          style={styles.messagesList}
-          contentContainerStyle={styles.messagesContent}
+          contentContainerStyle={styles.messagesList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => {
             if (messages.length > 0) {
@@ -343,9 +342,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messagesList: {
-    flex: 1,
-  },
-  messagesContent: {
     padding: 16,
     paddingBottom: 8,
   },
